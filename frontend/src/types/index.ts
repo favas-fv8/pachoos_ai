@@ -142,8 +142,11 @@ export interface AdminProduct {
   is_available: boolean
   brand: string
   sku: string
+  ingredients: string
+  nutritional_info: Record<string, unknown> | null
   images: ProductImage[]
   variants: ProductVariant[]
+  tags: { id: number; name: string; slug: string }[]
   created_at?: string
   updated_at?: string
 }

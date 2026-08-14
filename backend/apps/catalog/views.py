@@ -221,7 +221,7 @@ class ProductAdminViewSet(viewsets.ModelViewSet):
 
     queryset = Product.objects.select_related(
         "subcategory", "subcategory__category"
-    ).prefetch_related("images", "variants")
+    ).prefetch_related("images", "variants", "product_tags__tag")
     serializer_class = AdminProductSerializer
     pagination_class = StandardPagination
     permission_classes = [IsAdmin]
@@ -521,7 +521,7 @@ class CategoryAdminViewSet(viewsets.ModelViewSet):
         qs = (
             Product.objects.filter(subcategory__category=category)
             .select_related("subcategory", "subcategory__category")
-            .prefetch_related("images", "variants")
+            .prefetch_related("images", "variants", "product_tags__tag")
             .order_by("-created_at")
         )
         paginator = StandardPagination()

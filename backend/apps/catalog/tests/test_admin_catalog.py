@@ -18,8 +18,11 @@ from apps.catalog.models import (
     Category,
     Product,
     ProductImage,
+    ProductTag,
+    ProductVariant,
     StockMovement,
     Subcategory,
+    Tag,
 )
 
 User = get_user_model()
@@ -294,3 +297,294 @@ class TestAdminSecurity:
     def test_store_manager_has_same_access_as_super_admin(self, api_admin2):
         res = api_admin2.post("/api/v1/catalog/admin/categories/", {"name": "Manager Cat"})
         assert res.status_code == 201
+
+
+@pytest.mark.django_db
+class TestAdminProductExtendedFields:
+    """The 7 customer-visible product fields must be admin-manageable.
+
+    Covers: freshness, variants (size/weight), ingredients, brand, SKU, tags
+    and nutritional info. Verifies create, edit, persistence and that the
+    customer-facing detail endpoint reflects the saved values.
+    """
+
+    def _make_category_and_sub(self, api_admin1):
+        cat = api_admin1.post(
+            "/api/v1/catalog/admin/categories/", {"name": "Extended"}
+        ).json()
+        sub = api_admin1.post(
+            f"/api/v1/catalog/admin/categories/{cat['id']}/subcategories/",
+            {"name": "Extended sub"},
+        ).json()
+        return cat, sub
+
+    def test_create_product_with_all_extended_fields(self, api_admin1, api_admin2):
+        cat, sub = self._make_category_and_sub(api_admin1)
+        payload = {
+            "name": "Granola Bar",
+            "subcategory": sub["id"],
+            "base_price": "120",
+            "stock_quantity": 10,
+            "is_available": True,
+            "freshness": "dry",
+            "brand": "PACHOOS",
+            "sku": "EXT-GRANOLA-001",
+            "ingredients": "Oats, honey, nuts",
+            "nutritional_info": {"calories": "200 kcal", "protein": "5g"},
+            "tags": ["new", "healthy"],
+            "variants": [
+                {
+                    "name": "200g",
+                    "sku": "EXT-GRANOLA-200",
+                    "price": "120",
+                    "stock_quantity": 5,
+                    "is_active": True,
+                },
+                {
+                    "name": "500g",
+                    "sku": "EXT-GRANOLA-500",
+                    "price": "250",
+                    "stock_quantity": 5,
+                    "is_active": True,
+                },
+            ],
+        }
+        res = api_admin1.post("/api/v1/catalog/admin/products/", payload, format="json")
+        assert res.status_code == 201, res.json()
+        data = res.json()
+        assert data["freshness"] == "dry"
+        assert data["brand"] == "PACHOOS"
+        assert data["sku"] == "EXT-GRANOLA-001"
+        assert data["ingredients"] == "Oats, honey, nuts"
+        assert data["nutritional_info"] == {"calories": "200 kcal", "protein": "5g"}
+        tag_names = {t["name"] for t in data["tags"]}
+        assert tag_names == {"new", "healthy"}
+        assert len(data["variants"]) == 2
+
+        product = Product.objects.get(pk=data["id"])
+        assert product.ingredients == "Oats, honey, nuts"
+        assert product.nutritional_info["protein"] == "5g"
+        assert product.freshness == "dry"
+        assert product.brand == "PACHOOS"
+        assert product.sku == "EXT-GRANOLA-001"
+        assert product.variants.count() == 2
+        assert ProductTag.objects.filter(product=product).count() == 2
+
+        # Customer-facing detail reflects the saved values.
+        cust = api_admin2.get(
+            f"/api/v1/catalog/products/{product.slug}/"
+        )
+        assert cust.status_code == 200
+        cdata = cust.json()
+        assert cdata["ingredients"] == "Oats, honey, nuts"
+        assert cdata["nutritional_info"]["calories"] == "200 kcal"
+        assert cdata["freshness"] == "dry"
+        assert cdata["brand"] == "PACHOOS"
+        assert cdata["sku"] == "EXT-GRANOLA-001"
+        assert {t["name"] for t in cdata["tags"]} == {"new", "healthy"}
+        assert len(cdata["variants"]) == 2
+
+    def test_edit_product_updates_extended_fields(self, api_admin1):
+        cat, sub = self._make_category_and_sub(api_admin1)
+        created = api_admin1.post(
+            "/api/v1/catalog/admin/products/",
+            {
+                "name": "Edit Me",
+                "subcategory": sub["id"],
+                "base_price": "50",
+                "stock_quantity": 3,
+                "is_available": True,
+                "freshness": "fresh",
+                "brand": "A",
+                "tags": ["old"],
+            },
+            format="json",
+        ).json()
+
+        res = api_admin1.patch(
+            f"/api/v1/catalog/admin/products/{created['id']}/",
+            {
+                "name": "Edited Product",
+                "brand": "Brand B",
+                "freshness": "frozen",
+                "ingredients": "Milk, sugar",
+                "sku": "EDIT-SKU-9",
+                "nutritional_info": {"servings": 2},
+                "tags": ["fresh", "seasonal"],
+                "variants": [
+                    {
+                        "id": created["variants"][0]["id"] if created["variants"] else None,
+                        "name": "500g",
+                        "sku": "EDIT-V-500",
+                        "price": "60",
+                        "stock_quantity": 4,
+                        "is_active": True,
+                    }
+                ],
+            },
+            format="json",
+        )
+        assert res.status_code == 200, res.json()
+        data = res.json()
+        assert data["brand"] == "Brand B"
+        assert data["freshness"] == "frozen"
+        assert data["ingredients"] == "Milk, sugar"
+        assert data["sku"] == "EDIT-SKU-9"
+        assert data["nutritional_info"] == {"servings": 2}
+        assert {t["name"] for t in data["tags"]} == {"fresh", "seasonal"}
+        assert len(data["variants"]) == 1
+
+        product = Product.objects.get(pk=created["id"])
+        assert product.brand == "Brand B"
+        assert product.freshness == "frozen"
+        assert product.ingredients == "Milk, sugar"
+        assert {pt.tag.name for pt in product.product_tags.all()} == {"fresh", "seasonal"}
+        assert product.variants.count() == 1
+        assert product.variants.first().name == "500g"
+
+    def test_extended_fields_persist_after_refresh(self, api_admin1):
+        cat, sub = self._make_category_and_sub(api_admin1)
+        created = api_admin1.post(
+            "/api/v1/catalog/admin/products/",
+            {
+                "name": "Persist Me",
+                "subcategory": sub["id"],
+                "base_price": "80",
+                "stock_quantity": 6,
+                "is_available": True,
+                "freshness": "bakery",
+                "brand": "Persist Brand",
+                "ingredients": "Flour, yeast",
+                "tags": ["baked"],
+            },
+            format="json",
+        ).json()
+
+        refetched = api_admin1.get(
+            f"/api/v1/catalog/admin/categories/{cat['id']}/products/"
+        ).json()["results"]
+        match = next(p for p in refetched if p["id"] == created["id"])
+        assert match["freshness"] == "bakery"
+        assert match["brand"] == "Persist Brand"
+        assert match["ingredients"] == "Flour, yeast"
+        assert [t["name"] for t in match["tags"]] == ["baked"]
+
+        detail = api_admin1.get(
+            f"/api/v1/catalog/admin/products/{created['id']}/"
+        ).json()
+        assert detail["freshness"] == "bakery"
+        assert detail["brand"] == "Persist Brand"
+        assert detail["ingredients"] == "Flour, yeast"
+        assert [t["name"] for t in detail["tags"]] == ["baked"]
+
+    def test_blank_sku_gets_unique_auto_value(self, api_admin1):
+        cat, sub = self._make_category_and_sub(api_admin1)
+        first = api_admin1.post(
+            "/api/v1/catalog/admin/products/",
+            {
+                "name": "No Sku One",
+                "subcategory": sub["id"],
+                "base_price": "10",
+                "stock_quantity": 1,
+                "is_available": True,
+            },
+        ).json()
+        second = api_admin1.post(
+            "/api/v1/catalog/admin/products/",
+            {
+                "name": "No Sku Two",
+                "subcategory": sub["id"],
+                "base_price": "10",
+                "stock_quantity": 1,
+                "is_available": True,
+            },
+        ).json()
+        assert first["sku"]
+        assert second["sku"]
+        assert first["sku"] != second["sku"]
+
+    def test_duplicate_sku_is_rejected(self, api_admin1):
+        cat, sub = self._make_category_and_sub(api_admin1)
+        api_admin1.post(
+            "/api/v1/catalog/admin/products/",
+            {
+                "name": "Has Sku",
+                "subcategory": sub["id"],
+                "base_price": "10",
+                "stock_quantity": 1,
+                "is_available": True,
+                "sku": "DUP-SKU-1",
+            },
+        )
+        res = api_admin1.post(
+            "/api/v1/catalog/admin/products/",
+            {
+                "name": "Other",
+                "subcategory": sub["id"],
+                "base_price": "10",
+                "stock_quantity": 1,
+                "is_available": True,
+                "sku": "DUP-SKU-1",
+            },
+        )
+        assert res.status_code == 400
+
+    def test_duplicate_variant_sku_is_rejected(self, api_admin1):
+        cat, sub = self._make_category_and_sub(api_admin1)
+        res = api_admin1.post(
+            "/api/v1/catalog/admin/products/",
+            {
+                "name": "Variant Dup",
+                "subcategory": sub["id"],
+                "base_price": "10",
+                "stock_quantity": 1,
+                "is_available": True,
+                "variants": [
+                    {"name": "A", "sku": "V-DUP", "price": "5", "stock_quantity": 1},
+                    {"name": "B", "sku": "V-DUP", "price": "5", "stock_quantity": 1},
+                ],
+            },
+            format="json",
+        )
+        assert res.status_code == 400
+
+    def test_invalid_nutritional_info_is_rejected(self, api_admin1):
+        cat, sub = self._make_category_and_sub(api_admin1)
+        res = api_admin1.post(
+            "/api/v1/catalog/admin/products/",
+            {
+                "name": "Bad Nutrition",
+                "subcategory": sub["id"],
+                "base_price": "10",
+                "stock_quantity": 1,
+                "is_available": True,
+                "nutritional_info": [1, 2, 3],
+            },
+            format="json",
+        )
+        assert res.status_code == 400
+
+    def test_existing_product_without_new_values_still_works(self, api_admin1):
+        cat, sub = self._make_category_and_sub(api_admin1)
+        created = api_admin1.post(
+            "/api/v1/catalog/admin/products/",
+            {
+                "name": "Minimal",
+                "subcategory": sub["id"],
+                "base_price": "20",
+                "stock_quantity": 2,
+                "is_available": True,
+            },
+        ).json()
+        assert created["freshness"] == "fresh"
+        assert created["ingredients"] == ""
+        assert created["brand"] == ""
+        assert created["nutritional_info"] is None
+        assert created["tags"] == []
+        assert created["variants"] == []
+
+        res = api_admin1.patch(
+            f"/api/v1/catalog/admin/products/{created['id']}/", {"name": "Minimal 2"}
+        )
+        assert res.status_code == 200
+        assert res.json()["name"] == "Minimal 2"

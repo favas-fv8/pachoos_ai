@@ -8,7 +8,10 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { api, toApiError } from '@/lib/api/client'
 import { stockUnitLabel } from './constants'
-import type { AdminProduct, Category } from '@/types'
+import type { AdminProduct, Category, ProductVariant } from '@/types'
+
+/** Variant row in the admin product form — id is absent for newly added rows. */
+type VariantDraft = Omit<ProductVariant, 'id'> & { id?: number }
 
 // ─── Image upload rules (mirror the backend validation) ────────────────────
 
@@ -202,6 +205,101 @@ export function CategoryForm({
   )
 }
 
+// ─── Product variants editor ───────────────────────────────────────────────
+
+export function VariantEditor({
+  variants,
+  onChange,
+}: {
+  variants: VariantDraft[]
+  onChange: (variants: VariantDraft[]) => void
+}) {
+  const update = (index: number, patch: Partial<VariantDraft>) => {
+    const next = variants.map((v, i) => (i === index ? { ...v, ...patch } : v))
+    onChange(next)
+  }
+
+  const remove = (index: number) => onChange(variants.filter((_, i) => i !== index))
+
+  const add = () =>
+    onChange([
+      ...variants,
+      {
+        id: undefined,
+        name: '',
+        sku: '',
+        price: 0,
+        discount_percent: 0,
+        effective_price: 0,
+        stock_quantity: 0,
+        is_active: true,
+      },
+    ])
+
+  return (
+    <div className="sm:col-span-2">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-xs text-ink-muted">Variants (size / weight)</span>
+        <Button variant="outline" size="sm" type="button" onClick={add}>
+          <Plus className="mr-1 h-4 w-4" /> Add variant
+        </Button>
+      </div>
+      {variants.length === 0 ? (
+        <p className="rounded-xl border border-dashed border-border bg-surface-muted px-3 py-3 text-sm text-ink-muted">
+          No variants. The product sells as a single unit.
+        </p>
+      ) : (
+        <div className="space-y-3">
+          {variants.map((v, i) => (
+            <div key={v.id ?? i} className="grid gap-2 rounded-xl border border-border bg-surface-muted p-3 sm:grid-cols-6">
+              <Input
+                placeholder="Name (e.g. 200g)"
+                value={v.name}
+                onChange={(e) => update(i, { name: e.target.value })}
+              />
+              <Input
+                placeholder="SKU"
+                value={v.sku}
+                onChange={(e) => update(i, { sku: e.target.value })}
+              />
+              <Input
+                type="number"
+                placeholder="Price (₹)"
+                value={v.price}
+                onChange={(e) => update(i, { price: Number(e.target.value) })}
+              />
+              <Input
+                type="number"
+                placeholder="Stock"
+                value={v.stock_quantity}
+                onChange={(e) => update(i, { stock_quantity: Number(e.target.value) })}
+              />
+              <label className="flex items-center gap-2 text-sm text-ink-muted">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={v.is_active}
+                  onChange={(e) => update(i, { is_active: e.target.checked })}
+                />
+                Active
+              </label>
+              <Button
+                variant="ghost"
+                size="sm"
+                type="button"
+                onClick={() => remove(i)}
+                aria-label={`Remove variant ${v.name || i + 1}`}
+              >
+                <Trash2 className="h-4 w-4 text-danger" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Product form ──────────────────────────────────────────────────────────
 
 export function ProductForm({
@@ -221,7 +319,25 @@ export function ProductForm({
   onClose: () => void
   onError: (msg: string) => void
 }) {
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<{
+  name: string
+  pid: string
+  subcategory: number
+  base_price: string
+  selling_price: string
+  discount_percent: string
+  stock_quantity: number
+  stock_unit: 'kg' | 'count'
+  is_available: boolean
+  description: string
+  freshness: string
+  brand: string
+  sku: string
+  ingredients: string
+  tags: string
+  nutritional_info: string
+  variants: VariantDraft[]
+}>({
     name: product?.name ?? '',
     pid: product?.pid ?? '',
     subcategory: product?.subcategory ?? defaultSubcategoryId ?? 0,
@@ -232,6 +348,15 @@ export function ProductForm({
     stock_unit: product?.stock_unit ?? 'count',
     is_available: product?.is_available ?? true,
     description: product?.description ?? '',
+    freshness: product?.freshness ?? 'fresh',
+    brand: product?.brand ?? '',
+    sku: product?.sku ?? '',
+    ingredients: product?.ingredients ?? '',
+    tags: (product?.tags ?? []).map((t) => t.name).join(', '),
+    nutritional_info: product?.nutritional_info
+      ? JSON.stringify(product.nutritional_info, null, 2)
+      : '',
+    variants: product?.variants ?? [],
   })
   const [categoryId, setCategoryId] = useState<number>(
     product?.category ?? defaultCategoryId ?? (categories[0]?.id as number | undefined) ?? 0,
@@ -293,6 +418,29 @@ export function ProductForm({
     }
     const discount = real > 0 ? Math.round((1 - selling / real) * 10000) / 100 : 0
 
+    let tags: string[] = []
+    if (form.tags.trim()) {
+      tags = form.tags
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean)
+    }
+
+    let nutritional_info: Record<string, unknown> | null = null
+    if (form.nutritional_info.trim()) {
+      try {
+        const parsed = JSON.parse(form.nutritional_info)
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          onError('Nutritional info must be a JSON object.')
+          return
+        }
+        nutritional_info = parsed
+      } catch {
+        onError('Nutritional info must be valid JSON.')
+        return
+      }
+    }
+
     setSaving(true)
     try {
       const payload = {
@@ -305,6 +453,21 @@ export function ProductForm({
         stock_quantity: Number(form.stock_quantity) || 0,
         stock_unit: form.stock_unit,
         is_available: form.is_available,
+        freshness: form.freshness,
+        brand: form.brand.trim(),
+        sku: form.sku.trim(),
+        ingredients: form.ingredients,
+        tags,
+        nutritional_info,
+        variants: form.variants.map((v) => ({
+          id: v.id ?? undefined,
+          name: v.name,
+          sku: v.sku,
+          price: v.price,
+          discount_percent: v.discount_percent,
+          stock_quantity: v.stock_quantity,
+          is_active: v.is_active,
+        })),
       }
       if (product) {
         await api.patch(`/api/v1/catalog/admin/products/${product.id}/`, payload)
@@ -427,6 +590,53 @@ export function ProductForm({
           className="sm:col-span-2"
           value={form.description}
           onChange={(e) => setForm({ ...form, description: e.target.value })}
+        />
+        <Input
+          placeholder="Brand (optional)"
+          value={form.brand}
+          onChange={(e) => setForm({ ...form, brand: e.target.value })}
+        />
+        <Input
+          placeholder="SKU (optional)"
+          value={form.sku}
+          onChange={(e) => setForm({ ...form, sku: e.target.value })}
+        />
+        <label className="block">
+          <span className="mb-1 block text-xs text-ink-muted">Freshness</span>
+          <select
+            className="h-11 w-full rounded-xl border border-border bg-surface px-3 text-sm text-ink"
+            value={form.freshness}
+            onChange={(e) => setForm({ ...form, freshness: e.target.value })}
+          >
+            <option value="fresh">Fresh</option>
+            <option value="frozen">Frozen</option>
+            <option value="bakery">Bakery</option>
+            <option value="dry">Dry</option>
+          </select>
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-xs text-ink-muted">Tags (comma separated)</span>
+          <Input
+            placeholder="e.g. organic, new, bestseller"
+            value={form.tags}
+            onChange={(e) => setForm({ ...form, tags: e.target.value })}
+          />
+        </label>
+        <Input
+          placeholder="Ingredients (optional)"
+          className="sm:col-span-2"
+          value={form.ingredients}
+          onChange={(e) => setForm({ ...form, ingredients: e.target.value })}
+        />
+        <textarea
+          placeholder={'Nutritional info (JSON object, optional)\ne.g. {"calories":"200 kcal","protein":"5g"}'}
+          className="min-h-20 w-full rounded-xl border border-border bg-surface px-3 py-2 text-sm text-ink sm:col-span-2"
+          value={form.nutritional_info}
+          onChange={(e) => setForm({ ...form, nutritional_info: e.target.value })}
+        />
+        <VariantEditor
+          variants={form.variants}
+          onChange={(variants) => setForm((f) => ({ ...f, variants }))}
         />
       </div>
 

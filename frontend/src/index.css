@@ -1,0 +1,156 @@
+@import 'tailwindcss';
+
+/* ---------------------------------------------------------------------------
+   PACHOOS design tokens
+   Warm artisan palette: fresh orange + leaf green, Apple-grade neutrals.
+   ------------------------------------------------------------------------- */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Fraunces', ui-serif, Georgia, serif;
+
+  /* Light theme */
+  --color-background: #fdfbf7;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f4f0e8;
+  --color-primary: #e8762c;
+  --color-primary-foreground: #ffffff;
+  --color-primary-muted: #fdeadd;
+  --color-secondary: #3e7c4f;
+  --color-secondary-foreground: #ffffff;
+  --color-secondary-muted: #e4efe6;
+  --color-ink: #1f2933;
+  --color-ink-muted: #6b7280;
+  --color-border: #e8e2d6;
+  --color-ring: #e8762c;
+  --color-danger: #d14343;
+  --color-danger-muted: #fbe9e9;
+  --color-success: #2e8b57;
+  --color-warning: #c98a1b;
+
+  /* Dark theme */
+  --color-background-dark: #0f1115;
+  --color-surface-dark: #171a1f;
+  --color-surface-muted-dark: #1f242b;
+  --color-ink-dark: #f3f4f6;
+  --color-ink-muted-dark: #9aa3af;
+  --color-border-dark: #2a2f37;
+  --color-primary-dark: #f08a45;
+
+  --radius-sm: 0.5rem;
+  --radius: 0.75rem;
+  --radius-md: 0.875rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.25rem;
+  --radius-2xl: 1.75rem;
+
+  --shadow-card: 0 1px 2px rgb(31 41 51 / 0.05), 0 8px 24px -12px rgb(31 41 51 / 0.12);
+  --shadow-pop: 0 4px 12px rgb(31 41 51 / 0.08), 0 16px 40px -16px rgb(31 41 51 / 0.22);
+
+  --animate-fade-up: fade-up 0.3s ease-out both;
+  --animate-scale-in: scale-in 0.18s ease-out both;
+
+  @keyframes fade-up {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes scale-in {
+    from {
+      opacity: 0;
+      transform: scale(0.97);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Dark-mode mapping
+   ------------------------------------------------------------------------- */
+.dark {
+  --color-background: var(--color-background-dark);
+  --color-surface: var(--color-surface-dark);
+  --color-surface-muted: var(--color-surface-muted-dark);
+  --color-primary: var(--color-primary-dark);
+  --color-ink: var(--color-ink-dark);
+  --color-ink-muted: var(--color-ink-muted-dark);
+  --color-border: var(--color-border-dark);
+  --color-shadow-card: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px -12px rgb(0 0 0 / 0.6);
+}
+
+/* ---------------------------------------------------------------------------
+   Base
+   ------------------------------------------------------------------------- */
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html {
+    scroll-behavior: smooth;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-feature-settings: 'cv02', 'cv03';
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
+    letter-spacing: -0.01em;
+  }
+
+  ::selection {
+    background-color: color-mix(in oklab, var(--color-primary) 25%, transparent);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
+  }
+
+  /* Respect users who prefer reduced motion. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@utility scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@utility container-px {
+  padding-inline: 1rem;
+  @media (min-width: 640px) {
+    padding-inline: 1.5rem;
+  }
+  @media (min-width: 1024px) {
+    padding-inline: 2rem;
+  }
+}

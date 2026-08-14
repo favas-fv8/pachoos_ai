@@ -1,0 +1,12 @@
+# Root-level ignores (subprojects carry their own .gitignore for node_modules,
+# .venv, .env, media, build output, etc.)
+
+# Local database — never commit
+backend/db.sqlite3
+backend/db.sqlite3-journal
+
+# Local tooling / scratch output
+tsc_errors
+
+# opencode tool configuration is self-ignored; keep the folder out anyway
+.opencode/

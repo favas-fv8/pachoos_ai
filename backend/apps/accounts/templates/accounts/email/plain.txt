@@ -1,0 +1,9 @@
+{% autoescape off %}{{ brand }} - {{ subject }}
+
+{% for p in paragraphs %}{{ p }}
+
+{% endfor %}{% if action_url and action_text %}{{ action_text }}: {{ action_url }}
+
+{% endif %}{% if note %}{{ note }}
+
+{% endif %}- You are receiving this email because of activity on your {{ brand }} account.{% endautoescape %}

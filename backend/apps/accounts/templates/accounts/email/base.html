@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ subject }}</title>
+  </head>
+  <body style="margin:0;padding:0;background:#f4f4f5;font-family:Arial,Helvetica,sans-serif;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:24px 12px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e4e4e7;">
+            <tr>
+              <td style="padding:28px 32px;background:#7c3aed;color:#ffffff;">
+                <h1 style="margin:0;font-size:22px;letter-spacing:1px;">{{ brand }}</h1>
+                <p style="margin:6px 0 0;opacity:.85;font-size:13px;">Bakery &amp; Fruits Shop</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:28px 32px;color:#18181b;">
+                {% for p in paragraphs %}<p style="margin:0 0 14px;font-size:14px;line-height:1.6;">{{ p }}</p>{% endfor %}
+                {% if action_url and action_text %}
+                <p style="margin:20px 0;text-align:center;">
+                  <a href="{{ action_url }}" style="display:inline-block;background:#7c3aed;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:10px;font-size:14px;font-weight:600;">{{ action_text }}</a>
+                </p>
+                {% endif %}
+                {% if note %}<p style="margin:0;font-size:12px;color:#71717a;line-height:1.5;">{{ note }}</p>{% endif %}
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:16px 32px;border-top:1px solid #f4f4f5;color:#a1a1aa;font-size:11px;">
+                You are receiving this email because of activity on your PACHOOS account.
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

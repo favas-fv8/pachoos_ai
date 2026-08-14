@@ -1,0 +1,6 @@
+# Dev-only tooling and test runners (not shipped to production)
+ruff==0.8.*
+pytest==8.*
+pytest-django==4.*
+pytest-cov==6.*
+pre-commit==4.*

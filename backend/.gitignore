@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.DS_Store
+
+# Env / secrets
+.env
+.env.prod
+*.pem
+.firebase-service-account.json
+*service-account*.json
+serviceAccount*.json
+
+# Static / media (local)
+staticfiles/
+media/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Tooling caches
+.ruff_cache/
+.mypy_cache/

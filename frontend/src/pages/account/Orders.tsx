@@ -6,16 +6,8 @@ import { Link } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { fetchListAll, toApiError } from '@/lib/api/client'
-
-interface Order {
-  id: string
-  order_number: string
-  status: string
-  status_display?: string
-  grand_total: string
-  created_at: string
-  items_count?: number
-}
+import { formatINR } from '@/lib/utils'
+import type { OrderListItem } from '@/types'
 
 const statusColor = (s: string) => {
   const map: Record<string, 'warning' | 'success' | 'secondary' | 'danger'> = {
@@ -30,8 +22,18 @@ const statusColor = (s: string) => {
   return map[s] || 'secondary'
 }
 
+const paymentColor = (s: string) => {
+  const map: Record<string, 'warning' | 'success' | 'danger'> = {
+    pending: 'warning',
+    paid: 'success',
+    failed: 'danger',
+    refunded: 'warning',
+  }
+  return map[s] || 'warning'
+}
+
 export default function Orders() {
-  const [orders, setOrders] = useState<Order[]>([])
+  const [orders, setOrders] = useState<OrderListItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -39,7 +41,7 @@ export default function Orders() {
     setLoading(true)
     setError('')
     try {
-      const data = await fetchListAll<Order>('/api/v1/orders/')
+      const data = await fetchListAll<OrderListItem>('/api/v1/orders/')
       setOrders(data)
     } catch (err) {
       setError(toApiError(err).message)
@@ -108,10 +110,20 @@ export default function Orders() {
               </p>
             </div>
             <div className="text-right">
-              <p className="font-semibold">₹{o.grand_total}</p>
-              <Badge variant={statusColor(o.status)} className="mt-1">
-                {o.status_display || o.status}
-              </Badge>
+              <p className="font-semibold">{formatINR(Number(o.grand_total))}</p>
+              <div className="mt-1 flex justify-end gap-1">
+                <Badge variant={statusColor(o.status)}>
+                  {o.status_display || o.status}
+                </Badge>
+                <Badge variant={paymentColor(o.payment_status)}>
+                  {o.payment_status_display || o.payment_status}
+                </Badge>
+              </div>
+              {o.payment_method && (
+                <p className="mt-1 text-xs capitalize text-ink-muted">
+                  {o.payment_method.replace(/_/g, ' ')}
+                </p>
+              )}
             </div>
           </Link>
         ))}

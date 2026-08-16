@@ -187,6 +187,26 @@ class ProductImage(TimeStampedModel):
         return self.image_url
 
 
+class Wishlist(TimeStampedModel):
+    """A customer's wishlisted product."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="wishlist_items",
+    )
+    product = models.ForeignKey(
+        Product, on_delete=models.CASCADE, related_name="wishlist_entries"
+    )
+
+    class Meta:
+        unique_together = [("user", "product")]
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.user} ♥ {self.product}"
+
+
 class Tag(TimeStampedModel):
     name = models.CharField(max_length=60, unique=True)
     slug = models.SlugField(max_length=70, unique=True)
@@ -231,7 +251,12 @@ class StockMovement(TimeStampedModel):
             ("return", "Return"),
         ],
     )
-    ref_order_id = models.BigIntegerField(null=True, blank=True)
+    ref_order_id = models.CharField(
+        max_length=36,
+        null=True,
+        blank=True,
+        help_text="Order UUID that caused this movement (orders use UUID primary keys).",
+    )
     ref_purchase_id = models.BigIntegerField(null=True, blank=True)
     note = models.CharField(max_length=255, blank=True)
     created_by = models.ForeignKey(

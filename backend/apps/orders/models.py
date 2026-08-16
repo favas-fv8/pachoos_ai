@@ -16,7 +16,7 @@ class Order(UUIDPrimaryKeyModel, TimeStampedModel):
         on_delete=models.PROTECT,
         related_name="orders",
     )
-    order_number = models.CharField(max_length=14, unique=True, db_index=True)
+    order_number = models.CharField(max_length=32, unique=True, db_index=True)
 
     # Status lifecycle
     status = models.CharField(
@@ -29,6 +29,24 @@ class Order(UUIDPrimaryKeyModel, TimeStampedModel):
             ("out_for_delivery", "Out for Delivery"),
             ("delivered", "Delivered"),
             ("cancelled", "Cancelled"),
+            ("refunded", "Refunded"),
+        ],
+        default="pending",
+    )
+
+    # Payment (mirrors the linked payments.Payment record for easy display)
+    payment_method = models.CharField(
+        max_length=20,
+        blank=True,
+        default="",
+        help_text="Selected payment method (e.g. demo_upi, card, cod).",
+    )
+    payment_status = models.CharField(
+        max_length=20,
+        choices=[
+            ("pending", "Pending"),
+            ("paid", "Paid"),
+            ("failed", "Failed"),
             ("refunded", "Refunded"),
         ],
         default="pending",

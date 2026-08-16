@@ -10,6 +10,7 @@ from apps.catalog.views import (
     StockMovementViewSet,
     SubcategoryViewSet,
     TagViewSet,
+    WishlistViewSet,
 )
 
 router = DefaultRouter(trailing_slash=True)
@@ -20,6 +21,7 @@ router.register("admin/categories", CategoryAdminViewSet, basename="admin-catego
 router.register("admin/products", ProductAdminViewSet, basename="admin-product")
 router.register("tags", TagViewSet, basename="tag")
 router.register("stock-movements", StockMovementViewSet, basename="stock-movement")
+router.register("wishlist", WishlistViewSet, basename="wishlist")
 
 urlpatterns = [
     path("", include(router.urls)),

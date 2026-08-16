@@ -2,7 +2,7 @@
 from django.conf import settings
 from django.db import models
 
-from apps.core.models import UUIDPrimaryKeyModel, TimeStampedModel
+from apps.core.models import TimeStampedModel, UUIDPrimaryKeyModel
 
 
 class Payment(UUIDPrimaryKeyModel, TimeStampedModel):
@@ -14,17 +14,45 @@ class Payment(UUIDPrimaryKeyModel, TimeStampedModel):
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT
     )
+
+    # Gateway identity — provider stays replaceable (demo | razorpay).
+    provider = models.CharField(
+        max_length=20,
+        blank=True,
+        default="",
+        help_text="Payment gateway that processed this payment (demo | razorpay).",
+    )
+    is_demo = models.BooleanField(
+        default=False,
+        help_text="True when this payment was simulated by the demo gateway (no real money moved).",
+    )
+    transaction_id = models.CharField(
+        max_length=64,
+        blank=True,
+        help_text="Gateway transaction / reference ID.",
+    )
+
+    # Razorpay-specific fields (kept for the future real integration).
     razorpay_order_id = models.CharField(max_length=64, blank=True)
     razorpay_payment_id = models.CharField(max_length=64, blank=True)
     razorpay_signature = models.CharField(max_length=256, blank=True)
+
     method = models.CharField(
         max_length=20,
         choices=[
+            # Real (Razorpay) methods — connected later.
             ("upi", "UPI"),
             ("card", "Card"),
             ("netbanking", "Net Banking"),
             ("wallet", "Wallet"),
             ("emi", "EMI"),
+            # Demo methods — simulated, never a real charge.
+            ("demo_upi", "Demo UPI"),
+            ("demo_card", "Demo Card"),
+            ("demo_gpay", "Demo GPay"),
+            ("demo_phonepe", "Demo PhonePe"),
+            ("demo_paytm", "Demo Paytm"),
+            ("cod", "Cash on Delivery"),
         ],
         default="upi",
     )
@@ -35,6 +63,7 @@ class Payment(UUIDPrimaryKeyModel, TimeStampedModel):
             ("created", "Created"),
             ("authorized", "Authorized"),
             ("captured", "Captured"),
+            ("paid", "Paid"),
             ("failed", "Failed"),
             ("refunded", "Refunded"),
             ("partially_refunded", "Partially Refunded"),
@@ -51,6 +80,7 @@ class Payment(UUIDPrimaryKeyModel, TimeStampedModel):
         indexes = [
             models.Index(fields=["razorpay_payment_id"]),
             models.Index(fields=["razorpay_order_id"]),
+            models.Index(fields=["transaction_id"]),
         ]
 
     def __str__(self):

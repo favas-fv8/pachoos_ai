@@ -73,17 +73,21 @@ export default function ChangePasswordForm() {
   return (
     <div className="space-y-4">
       {error && <div className="rounded-xl bg-danger-muted p-3 text-sm text-danger">{error}</div>}
-      <Input
-        type="password"
-        placeholder="Current password"
-        value={currentPassword}
-        onChange={(e) => setCurrentPassword(e.target.value)}
-        autoComplete="current-password"
-      />
-      <div>
+      <label className="block">
+        <span className="mb-1 block text-xs text-ink-muted">Current password</span>
         <Input
           type="password"
-          placeholder="New password"
+          placeholder="Enter your current password"
+          value={currentPassword}
+          onChange={(e) => setCurrentPassword(e.target.value)}
+          autoComplete="current-password"
+        />
+      </label>
+      <label className="block">
+        <span className="mb-1 block text-xs text-ink-muted">New password</span>
+        <Input
+          type="password"
+          placeholder="Set a strong new password"
           value={newPassword}
           onChange={(e) => setNewPassword(e.target.value)}
           autoComplete="new-password"
@@ -97,14 +101,17 @@ export default function ChangePasswordForm() {
             ))}
           </ul>
         )}
-      </div>
-      <Input
-        type="password"
-        placeholder="Confirm new password"
-        value={confirm}
-        onChange={(e) => setConfirm(e.target.value)}
-        autoComplete="new-password"
-      />
+      </label>
+      <label className="block">
+        <span className="mb-1 block text-xs text-ink-muted">Confirm new password</span>
+        <Input
+          type="password"
+          placeholder="Re-enter the new password"
+          value={confirm}
+          onChange={(e) => setConfirm(e.target.value)}
+          autoComplete="new-password"
+        />
+      </label>
       <Button onClick={handleSubmit} disabled={loading} className="w-full">
         {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
         Change password

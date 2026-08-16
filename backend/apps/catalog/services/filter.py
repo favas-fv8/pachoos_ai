@@ -3,26 +3,37 @@ import re
 from typing import Any
 
 from django.db import models
-from django.db.models import QuerySet, Q
-from django.utils.translation import gettext_lazy as _
+from django.db.models import Q, QuerySet
 
-from apps.catalog.models import Product, Subcategory, Category, Tag
+from apps.catalog.models import Category
 
 
 def apply_search(queryset: QuerySet, query: str) -> QuerySet:
     if not query:
         return queryset
-    q = Q()
-    tokens = re.findall(r"[\w]+", query.lower())
+
+    raw = query.strip()
+    lower = raw.lower()
+    tokens = re.findall(r"[\w]+", lower)
+
+    if not tokens:
+        return queryset
+
+    # Build AND query: every token must match at least one searchable field
+    and_q = Q()
     for token in tokens:
-        q |= Q(name__icontains=token)
-        q |= Q(description__icontains=token)
-        q |= Q(brand__icontains=token)
-        q |= Q(sku__icontains=token)
-        q |= Q(tags__name__icontains=token)
-        q |= Q(subcategory__name__icontains=token)
-        q |= Q(subcategory__category__name__icontains=token)
-    return queryset.filter(q).distinct()
+        token_q = (
+            Q(name__icontains=token)
+            | Q(description__icontains=token)
+            | Q(brand__icontains=token)
+            | Q(sku__icontains=token)
+            | Q(product_tags__tag__name__icontains=token)
+            | Q(subcategory__name__icontains=token)
+            | Q(subcategory__category__name__icontains=token)
+        )
+        and_q &= token_q
+
+    return queryset.filter(and_q).distinct()
 
 
 def apply_filters(

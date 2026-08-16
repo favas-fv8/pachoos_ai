@@ -152,10 +152,10 @@ export function toApiError(error: unknown): ApiError {
     const parsed = rawError as ApiErrorBody['error'] | undefined
     return new ApiError(
       parsed?.code ?? 'ERROR',
-      parsed?.message ?? 'Something went wrong.',
+      parsed?.message ?? 'Request failed',
       parsed?.details ?? {},
       error.response?.status,
     )
   }
-  return new ApiError('ERROR', 'Something went wrong.', {})
+  return new ApiError('ERROR', 'Request failed', {})
 }

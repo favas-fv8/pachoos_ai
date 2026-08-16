@@ -1,7 +1,9 @@
 // Admin Orders — list, search, filter and update order status.
 import { useState, useEffect, useCallback } from "react"
 import { Search, Loader2 } from "lucide-react"
+import { Link } from "react-router-dom"
 import { Input } from "@/components/ui/input"
+import { Badge } from "@/components/ui/badge"
 import { BackButton } from "@/components/ui/back-button"
 import { api, toApiError } from "@/lib/api/client"
 import { Loader, StatusBadge } from "./shared"
@@ -13,10 +15,19 @@ interface Order {
   user_name: string
   user_phone: string
   status: string
+  payment_status: string
+  payment_method: string
   subtotal: string
   grand_total: string
   created_at: string
   cancellation_reason: string
+}
+
+const PAYMENT_STATUS_COLORS: Record<string, "warning" | "success" | "danger"> = {
+  pending: "warning",
+  paid: "success",
+  failed: "danger",
+  refunded: "warning",
 }
 
 export default function AdminOrders() {
@@ -75,19 +86,25 @@ export default function AdminOrders() {
         <div className="mt-4 rounded-xl bg-danger-muted p-3 text-sm text-danger">{error}</div>
       )}
 
-      <div className="mt-4 mb-4 flex items-center gap-3">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-muted" />
-          <Input placeholder="Search by order #, customer or phone..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-10" />
-        </div>
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className="rounded-xl border border-border bg-surface px-4 py-2 text-sm"
-        >
-          <option value="">All Status</option>
-          {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
+      <div className="mt-4 mb-4 flex flex-wrap items-end gap-3">
+        <label className="relative block flex-1 min-w-52">
+          <span className="mb-1 block text-xs text-ink-muted">Search</span>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-muted" />
+            <Input placeholder="Order #, customer or phone…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-10" />
+          </div>
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-xs text-ink-muted">Status</span>
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="rounded-xl border border-border bg-surface px-4 py-2 text-sm"
+          >
+            <option value="">All Status</option>
+            {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </label>
       </div>
 
       {loading ? <Loader /> : (
@@ -100,13 +117,18 @@ export default function AdminOrders() {
                 <th className="px-4 py-3 text-left font-medium">Total</th>
                 <th className="px-4 py-3 text-left font-medium">Date</th>
                 <th className="px-4 py-3 text-left font-medium">Status</th>
+                <th className="px-4 py-3 text-left font-medium">Payment</th>
                 <th className="px-4 py-3 text-right font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((o) => (
                 <tr key={o.id} className="border-t border-border">
-                  <td className="px-4 py-3 font-medium">{o.order_number}</td>
+                  <td className="px-4 py-3 font-medium">
+                    <Link to={`/admin/orders/${o.id}`} className="text-primary underline-offset-2 hover:underline">
+                      {o.order_number}
+                    </Link>
+                  </td>
                   <td className="px-4 py-3">
                     <p>{o.user_name}</p>
                     <p className="text-xs text-ink-muted">{o.user_phone}</p>
@@ -115,6 +137,18 @@ export default function AdminOrders() {
                   <td className="px-4 py-3 text-ink-muted">{new Date(o.created_at).toLocaleDateString()}</td>
                   <td className="px-4 py-3">
                     <StatusBadge status={o.status} />
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="space-y-1">
+                      <Badge variant={PAYMENT_STATUS_COLORS[o.payment_status] ?? "warning"}>
+                        {o.payment_status}
+                      </Badge>
+                      {o.payment_method && (
+                        <p className="text-xs capitalize text-ink-muted">
+                          {o.payment_method.replace(/_/g, " ")}
+                        </p>
+                      )}
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-right">
                     <span className="inline-flex items-center gap-1">
@@ -132,7 +166,7 @@ export default function AdminOrders() {
                 </tr>
               ))}
               {filtered.length === 0 && (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-ink-muted">No orders found.</td></tr>
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-ink-muted">No orders found.</td></tr>
               )}
             </tbody>
           </table>

@@ -7,6 +7,7 @@ interface UiState {
   theme: Theme
   mobileNavOpen: boolean
   deliveryAddress: DeliveryAddress | null
+  cartItemCount: number
   toasts: { id: string; message: string; variant: 'default' | 'error' | 'success' }[]
 }
 
@@ -32,6 +33,7 @@ const initialState: UiState = {
   theme: initialTheme(),
   mobileNavOpen: false,
   deliveryAddress: initialDeliveryAddress(),
+  cartItemCount: 0,
   toasts: [],
 }
 
@@ -65,10 +67,13 @@ const uiSlice = createSlice({
     dismissToast(state, action: PayloadAction<string>) {
       state.toasts = state.toasts.filter((t) => t.id !== action.payload)
     },
+    setCartItemCount(state, action: PayloadAction<number>) {
+      state.cartItemCount = action.payload
+    },
   },
 })
 
-export const { setTheme, setMobileNavOpen, setDeliveryAddress, pushToast, dismissToast, toggleTheme } = uiSlice.actions
+export const { setTheme, setMobileNavOpen, setDeliveryAddress, setCartItemCount, pushToast, dismissToast, toggleTheme } = uiSlice.actions
 
 // Sync the document theme whenever the slice changes.
 export function applyTheme(theme: Theme) {

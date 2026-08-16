@@ -15,6 +15,7 @@ const Payment = lazy(() => import('@/pages/Payment'))
 const Wallet = lazy(() => import('@/pages/Wallet'))
 const Account = lazy(() => import('@/pages/Account'))
 const Track = lazy(() => import('@/pages/Track'))
+const Wishlist = lazy(() => import('@/pages/Wishlist'))
 const Login = lazy(() => import('@/pages/Login'))
 const ForgotPassword = lazy(() => import('@/pages/ForgotPassword'))
 const ResetPassword = lazy(() => import('@/pages/ResetPassword'))
@@ -30,6 +31,7 @@ const AccountSettings = lazy(() => import('@/pages/account/Settings'))
 const AdminDashboard = lazy(() => import('@/pages/admin/dashboard'))
 const AdminProducts = lazy(() => import('@/pages/admin/products'))
 const AdminOrders = lazy(() => import('@/pages/admin/orders'))
+const AdminOrderDetail = lazy(() => import('@/pages/admin/order-detail'))
 const AdminCustomers = lazy(() => import('@/pages/admin/customers'))
 const AdminDebtBook = lazy(() => import('@/pages/admin/debt-book'))
 const AdminNotifications = lazy(() => import('@/pages/admin/notifications'))
@@ -71,6 +73,7 @@ const router = createBrowserRouter([
           { path: 'payment/:orderId', element: <RequireAuth><Payment /></RequireAuth> },
           { path: 'track/:orderId?', element: <Track /> },
           { path: 'wallet', element: <RequireAuth><Wallet /></RequireAuth> },
+          { path: 'wishlist', element: <RequireAuth><Wishlist /></RequireAuth> },
         ],
       },
 
@@ -112,6 +115,7 @@ const router = createBrowserRouter([
           { path: 'products', element: <AdminProducts /> },
           { path: 'categories', element: <Navigate to="/admin/products" replace /> },
           { path: 'orders', element: <AdminOrders /> },
+          { path: 'orders/:orderId', element: <AdminOrderDetail /> },
           { path: 'customers', element: <AdminCustomers /> },
           { path: 'debt-book', element: <AdminDebtBook /> },
           { path: 'payments', element: <AdminPayments /> },

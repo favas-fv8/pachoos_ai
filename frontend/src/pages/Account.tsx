@@ -3,6 +3,7 @@ import { User, Wallet, Package, CreditCard, Settings } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useAppSelector } from '@/store/hooks'
 import { isAdminRole } from '@/router/roles'
+import { BackButton } from '@/components/ui/back-button'
 
 const sections = [
   { icon: User, label: 'Profile', to: '/account/profile' },
@@ -21,6 +22,7 @@ export default function Account() {
 
   return (
     <div className="container-px mx-auto py-8">
+      <BackButton to="/shop" className="mb-4" />
       <h1 className="font-display text-3xl font-bold">Account</h1>
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {visibleSections.map((s) => (

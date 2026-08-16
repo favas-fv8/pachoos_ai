@@ -1,233 +1,122 @@
-// Payment page — Razorpay checkout, webhook status, and order management.
-import { useState, useEffect, useRef } from "react"
+// Payment page — Demo Payment (simulated, no real money). Replaceable by a real
+// gateway later; the confirmers in apps.orders.services are idempotent, so
+// double-clicks and page refreshes can never double-charge or double-deduct.
+import { useState, useEffect } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { motion } from "framer-motion"
 import {
-  CreditCard,
-  Loader2,
   CheckCircle,
   AlertCircle,
-  Clock,
+  Loader2,
   Smartphone,
+  CreditCard,
+  Wallet,
+  RefreshCw,
+  ArrowLeft,
+  ShieldCheck,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { api } from "@/lib/api/client"
-import { useAppSelector } from "@/store/hooks"
+import { api, toApiError } from "@/lib/api/client"
+import { formatINR } from "@/lib/utils"
+import type { PaymentMethod } from "@/types"
 
-interface PaymentData {
-  razorpay_order_id: string
-  amount: number
-  currency: string
-  status: string
-  method: string
-  payment_id?: string
-  signature?: string
-}
+const METHODS: { value: PaymentMethod; label: string; icon: typeof Smartphone }[] = [
+  { value: "demo_upi", label: "Demo UPI", icon: Smartphone },
+  { value: "demo_card", label: "Demo Card", icon: CreditCard },
+  { value: "demo_gpay", label: "Demo GPay", icon: Wallet },
+  { value: "demo_phonepe", label: "Demo PhonePe", icon: Wallet },
+  { value: "demo_paytm", label: "Demo Paytm", icon: Wallet },
+  { value: "cod", label: "Cash on Delivery", icon: Wallet },
+]
 
-interface PaymentStatus {
-  status: "created" | "authorized" | "captured" | "failed" | "refunded"
-  paymentId?: string
-  lastChecked?: Date
-}
+const methodLabel = (m: string): string =>
+  METHODS.find((x) => x.value === m)?.label ?? m.replace(/_/g, " ")
+
+type PageState = "loading" | "pending" | "paid" | "failed"
 
 export default function PaymentPage() {
   const navigate = useNavigate()
   const { orderId } = useParams<{ orderId: string }>()
-  const user = useAppSelector((state) => state.auth.user)
 
-  const [paymentData, setPaymentData] = useState<PaymentData | null>(null)
-  const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>({ status: "created" })
-  const [loading, setLoading] = useState(false)
+  const [state, setState] = useState<PageState>("loading")
+  const [orderNumber, setOrderNumber] = useState("")
+  const [amount, setAmount] = useState(0)
+  const [method, setMethod] = useState<PaymentMethod | "">("")
+  const [transactionId, setTransactionId] = useState("")
   const [error, setError] = useState("")
-  const [timeRemaining, setTimeRemaining] = useState(300)
-
-  const pollIntervalRef = useRef<NodeJS.Timeout>()
+  const [selectedMethod, setSelectedMethod] = useState<PaymentMethod>("demo_upi")
+  const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
-    if (!user) {
-      navigate("/login")
-      return
-    }
+    if (!orderId) return
+    let cancelled = false
 
-    initializePayment()
+    api
+      .get(`/api/v1/payments/order/${orderId}/status/`)
+      .then((res) => {
+        if (cancelled) return
+        setOrderNumber(res.data.order_number)
+        setAmount(Number(res.data.amount))
+        setMethod(res.data.payment_method || "")
+        setTransactionId(res.data.transaction_id || "")
+        if (res.data.payment_status === "paid") {
+          setState("paid")
+        } else if (res.data.payment_status === "failed") {
+          setState("failed")
+        } else {
+          setState("pending")
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setError(toApiError(err).message)
+        setState("failed")
+      })
 
     return () => {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current)
-      }
+      cancelled = true
     }
-  }, [orderId, user, navigate])
+  }, [orderId])
 
-  useEffect(() => {
-    if (paymentStatus.status === "created" && paymentData?.razorpay_order_id) {
-      pollPaymentStatus()
-
-      const timer = setInterval(() => {
-        setTimeRemaining((prev) => {
-          if (prev <= 1) {
-            clearInterval(timer)
-            return 0
-          }
-          return prev - 1
-        })
-      }, 1000)
-
-      return () => clearInterval(timer)
-    } else {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current)
-      }
-    }
-  }, [paymentStatus.status, paymentData])
-
-  const initializePayment = async () => {
-    setLoading(true)
+  const confirm = async (simulate: "success" | "fail") => {
+    if (!orderId || submitting) return
+    setSubmitting(true)
     setError("")
-
     try {
-      const response = await api.post("/api/v1/payments/razorpay/order/", {
+      const res = await api.post("/api/v1/payments/demo/confirm/", {
         order_id: orderId,
+        method: selectedMethod,
+        simulate,
       })
-
-      if (response.data.id) {
-        setPaymentData({
-          razorpay_order_id: response.data.id,
-          amount: response.data.amount / 100,
-          currency: response.data.currency,
-          status: response.data.status,
-          method: "upi",
-        })
+      if (res.data.success) {
+        setOrderNumber(res.data.order.order_number)
+        setAmount(Number(res.data.order.grand_total))
+        setMethod(res.data.payment?.method ?? selectedMethod)
+        setTransactionId(res.data.payment?.transaction_id ?? res.data.transaction_id)
+        setState("paid")
       } else {
-        setError("Failed to initialize payment. Please try again.")
-      }
-    } catch (err: any) {
-      const msg = err?.response?.data?.error?.message || "Payment initialization failed"
-      setError(msg)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const pollPaymentStatus = async () => {
-    if (!paymentData?.razorpay_order_id) return
-
-    try {
-      const response = await api.get(
-        `/api/v1/orders/${orderId}/payment/?payment_id=${paymentData.razorpay_order_id}`,
-      )
-
-      const updatedStatus = response.data.status as PaymentStatus["status"]
-      setPaymentStatus({
-        status: updatedStatus,
-        paymentId: response.data.razorpay_payment_id,
-        lastChecked: new Date(),
-      })
-
-      if (updatedStatus === "captured") {
-        if (pollIntervalRef.current) {
-          clearInterval(pollIntervalRef.current)
-        }
-      } else if (updatedStatus === "failed") {
-        if (pollIntervalRef.current) {
-          clearInterval(pollIntervalRef.current)
-        }
-        setError("Payment failed. Please try again.")
+        setMethod(selectedMethod)
+        setError(res.data.message || "Payment failed. Please try again.")
+        setState("failed")
       }
     } catch (err) {
-      console.error("Error polling payment status:", err)
+      const apiErr = toApiError(err)
+      setError(apiErr.message)
+      setState("failed")
+    } finally {
+      setSubmitting(false)
     }
   }
 
-  const handleRazorpayPayment = () => {
-    const razorpayKey = process.env.RAZORPAY_KEY_ID || "rzp_test_demo"
-
-    const options = {
-      key: razorpayKey,
-      amount: paymentData!.amount * 100,
-      currency: paymentData!.currency,
-      name: "PACHOOS",
-      description: `Order ${orderId}`,
-      order_id: paymentData!.razorpay_order_id,
-      handler: async (response: any) => {
-        try {
-          await api.post("/api/v1/payments/razorpay/webhook/", {
-            event: "payment.captured",
-            payload: {
-              payment: {
-                id: response.razorpay_payment_id,
-                amount: response.amount,
-                method: response.method,
-                order: {
-                  id: response.razorpay_order_id,
-                },
-              },
-            },
-            signature: response.razorpay_signature,
-          })
-
-          setPaymentStatus({
-            status: "captured",
-            paymentId: response.razorpay_payment_id,
-            lastChecked: new Date(),
-          })
-
-          if (pollIntervalRef.current) {
-            clearInterval(pollIntervalRef.current)
-          }
-        } catch (err) {
-          setError("Payment verification failed. Please contact support.")
-        }
-      },
-      prefill: {
-        name: user?.full_name || "",
-        email: user?.email || "",
-        contact: user?.phone || "",
-      },
-      notes: {
-        order_id: orderId,
-        customer_id: user?.id || "",
-      },
-      theme: {
-        color: "#10B981",
-      },
-    }
-
-    const razorpay = new (window as any).Razorpay(options)
-
-    razorpay.on("payment.failed", async (response: any) => {
-      try {
-        await api.post("/api/v1/payments/razorpay/webhook/", {
-          event: "payment.failed",
-          payload: {
-            payment: {
-              id: response.error.metadata.payment_id,
-              order: {
-                id: response.error.metadata.order_id,
-              },
-            },
-          },
-          signature: response.error.code || "",
-        })
-      } catch (err) {
-        console.error("Error logging payment failure:", err)
-      }
-
-      setPaymentStatus({
-        status: "failed",
-        paymentId: response.error.metadata.payment_id,
-        lastChecked: new Date(),
-      })
-      setError(response.error.description || "Payment failed. Please try again.")
-    })
-
-    razorpay.open()
-  }
-
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60)
-    const secs = seconds % 60
-    return `${mins}:${secs.toString().padStart(2, "0")}`
+  if (state === "loading") {
+    return (
+      <div className="container-px mx-auto py-8">
+        <div className="flex justify-center py-20">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -237,148 +126,149 @@ export default function PaymentPage() {
         animate={{ opacity: 1, y: 0 }}
         className="mx-auto max-w-2xl"
       >
-        <h1 className="font-display text-3xl font-bold">Secure Payment</h1>
-        <p className="mt-2 text-ink-muted">Order #{orderId} • {paymentData?.amount.toFixed(2)}</p>
+        <h1 className="font-display text-3xl font-bold">Payment</h1>
+        <p className="mt-2 text-ink-muted">Order {orderNumber || orderId}</p>
 
-        {error && (
-          <div className="mt-4 rounded-xl bg-danger-muted p-4 text-sm text-danger">
-            <div className="flex items-center gap-2">
-              <AlertCircle className="h-5 w-5" /> {error}
+        <div className="mt-4 flex items-center gap-2 rounded-xl bg-ink-subtle p-3 text-xs text-ink-muted">
+          <ShieldCheck className="h-4 w-4 shrink-0 text-warning" />
+          Demo Payment — this is a simulation. No real money is charged.
+        </div>
+
+        {/* ── SUCCESS ─────────────────────────────────────────────────────── */}
+        {state === "paid" && (
+          <div className="mt-6 rounded-2xl border border-border bg-surface p-8 text-center shadow-card">
+            <div className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-full bg-success/10">
+              <CheckCircle className="h-10 w-10 text-success" />
+            </div>
+            <h2 className="font-display text-2xl font-bold">Payment Successful</h2>
+            <p className="mt-1 text-sm text-ink-muted">
+              Your order has been confirmed. A confirmation has been added to your account.
+            </p>
+
+            <div className="mx-auto mt-6 max-w-sm space-y-2 rounded-xl bg-ink-subtle p-4 text-left text-sm">
+              <div className="flex justify-between">
+                <span className="text-ink-muted">Order</span>
+                <span className="font-medium">{orderNumber}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-ink-muted">Amount paid</span>
+                <span className="font-semibold">{formatINR(amount)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-ink-muted">Method</span>
+                <Badge variant="outline">{methodLabel(method)}</Badge>
+              </div>
+              {transactionId && (
+                <div className="flex justify-between">
+                  <span className="text-ink-muted">Transaction ID</span>
+                  <span className="font-mono text-xs">{transactionId}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="mt-6 flex flex-wrap justify-center gap-3">
+              <Button onClick={() => navigate(`/track/${orderId}`)}>
+                View Order
+              </Button>
+              <Button variant="outline" onClick={() => navigate("/account/orders")}>
+                My Orders
+              </Button>
             </div>
           </div>
         )}
 
-        <div className="mt-6 grid gap-6 lg:grid-cols-2">
-          <section className="rounded-2xl border border-border bg-surface p-6 shadow-card">
-            <h2 className="font-display text-lg font-semibold mb-4 flex items-center gap-2">
-              <CreditCard className="h-5 w-5 text-primary" /> Payment Details
-            </h2>
-
-            <div className="space-y-4">
-              <div className="flex items-center justify-between rounded-xl bg-ink-subtle p-4">
-                <span className="text-ink-muted">Order Amount</span>
-                <span className="font-semibold">₹{paymentData?.amount.toFixed(2)}</span>
-              </div>
-
-              <div className="flex items-center justify-between rounded-xl bg-ink-subtle p-4">
-                <span className="text-ink-muted">Payment Method</span>
-                <Badge variant="outline" className="flex items-center gap-1">
-                  <Smartphone className="h-3 w-3" /> UPI
-                </Badge>
-              </div>
-
-              <div className="flex items-center justify-between rounded-xl bg-ink-subtle p-4">
-                <span className="text-ink-muted">Status</span>
-                <Badge
-                  variant={
-                    paymentStatus.status === "captured"
-                      ? "success"
-                      : paymentStatus.status === "failed"
-                        ? "danger"
-                        : "warning"
-                  }
-                  className="flex items-center gap-1"
-                >
-                  {paymentStatus.status === "created" && <Loader2 className="h-3 w-3 animate-spin" />}
-                  {paymentStatus.status === "captured" && <CheckCircle className="h-3 w-3" />}
-                  {paymentStatus.status === "failed" && <AlertCircle className="h-3 w-3" />}
-                  {paymentStatus.status === "authorized" && <Clock className="h-3 w-3" />}
-                  {paymentStatus.status.charAt(0).toUpperCase() + paymentStatus.status.slice(1)}
-                </Badge>
-              </div>
-
-              {timeRemaining > 0 && paymentStatus.status === "created" && (
-                <div className="flex items-center justify-between rounded-xl bg-warning-muted p-4">
-                  <span className="text-ink-muted">Time Remaining</span>
-                  <span className="font-mono text-warning">00:{formatTime(timeRemaining)}</span>
-                </div>
-              )}
-
-              {paymentStatus.lastChecked && (
-                <div className="text-xs text-ink-muted">
-                  Last checked: {paymentStatus.lastChecked.toLocaleTimeString()}
-                </div>
-              )}
+        {/* ── FAILED ──────────────────────────────────────────────────────── */}
+        {state === "failed" && (
+          <div className="mt-6 rounded-2xl border border-border bg-surface p-8 text-center shadow-card">
+            <div className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-full bg-danger/10">
+              <AlertCircle className="h-10 w-10 text-danger" />
             </div>
-          </section>
-
-          <section className="rounded-2xl border border-border bg-surface p-6 shadow-card">
-            <h2 className="font-display text-lg font-semibold mb-4">Payment Security</h2>
-
-            <div className="space-y-3">
-              <div className="flex items-center gap-3">
-                <div className="rounded-full bg-success-muted p-2">
-                  <CheckCircle className="h-4 w-4 text-success" />
-                </div>
-                <span className="text-sm">SSL encrypted payments</span>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <div className="rounded-full bg-success-muted p-2">
-                  <CheckCircle className="h-4 w-4 text-success" />
-                </div>
-                <span className="text-sm">PCI DSS compliant</span>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <div className="rounded-full bg-success-muted p-2">
-                  <CheckCircle className="h-4 w-4 text-success" />
-                </div>
-                <span className="text-sm">Razorpay secure gateway</span>
-              </div>
-
-              <div className="mt-4 rounded-xl bg-ink-subtle p-3">
-                <p className="text-xs text-ink-muted">
-                  Your payment information is protected with bank-grade encryption. We never store your card details.
-                </p>
-              </div>
+            <h2 className="font-display text-2xl font-bold">Payment Failed</h2>
+            <p className="mt-1 text-sm text-ink-muted">
+              {error || "The payment could not be completed. No money was charged."}
+            </p>
+            <div className="mt-6 flex flex-wrap justify-center gap-3">
+              <Button onClick={() => setState("pending")}>
+                <RefreshCw className="mr-2 h-4 w-4" /> Try again
+              </Button>
+              <Button variant="outline" onClick={() => navigate(-1)}>
+                <ArrowLeft className="mr-2 h-4 w-4" /> Back
+              </Button>
             </div>
-          </section>
-        </div>
+          </div>
+        )}
 
-        <div className="mt-8 flex justify-between">
-          <Button
-            variant="outline"
-            onClick={() => navigate(-1)}
-            disabled={loading}
-          >
-            Back
-          </Button>
+        {/* ── PENDING (choose method + pay) ───────────────────────────────── */}
+        {state === "pending" && (
+          <div className="mt-6 rounded-2xl border border-border bg-surface p-6 shadow-card">
+            <h2 className="font-display text-lg font-semibold mb-4">Choose a payment method</h2>
 
-          {paymentStatus.status === "created" && (
-            <Button
-              onClick={handleRazorpayPayment}
-              disabled={loading}
-              className="min-w-[150px]"
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Initializing...
-                </>
-              ) : (
-                <>Pay Now - ₹{paymentData?.amount.toFixed(2)}</>
-              )}
-            </Button>
-          )}
+            <div className="space-y-2">
+              {METHODS.map((m) => {
+                const Icon = m.icon
+                return (
+                  <label
+                    key={m.value}
+                    className="flex cursor-pointer items-center gap-3 rounded-xl border border-border bg-surface px-4 py-3 text-sm transition-colors has-[:checked]:border-primary has-[:checked]:bg-primary/5"
+                  >
+                    <input
+                      type="radio"
+                      name="method"
+                      value={m.value}
+                      checked={selectedMethod === m.value}
+                      onChange={(e) => setSelectedMethod(e.target.value as PaymentMethod)}
+                      className="accent-primary"
+                    />
+                    <Icon className="h-4 w-4 text-ink-muted" />
+                    <span>{m.label}</span>
+                    {m.value === "cod" ? (
+                      <span className="ml-auto text-xs text-ink-muted">Pay at delivery</span>
+                    ) : (
+                      <span className="ml-auto text-xs text-ink-muted">Simulated</span>
+                    )}
+                  </label>
+                )
+              })}
+            </div>
 
-          {paymentStatus.status === "captured" && (
-            <Button
-              variant="outline"
-              onClick={() => navigate("/account/orders")}
-            >
-              View Order
-            </Button>
-          )}
+            {error && (
+              <div className="mt-4 rounded-xl bg-danger-muted p-3 text-sm text-danger">{error}</div>
+            )}
 
-          {paymentStatus.status === "failed" && (
-            <Button
-              onClick={initializePayment}
-              disabled={loading}
-            >
-              Try Again
-            </Button>
-          )}
-        </div>
+            <div className="mt-6 flex items-center justify-between gap-4">
+              <Button variant="outline" onClick={() => navigate(-1)} disabled={submitting}>
+                Back
+              </Button>
+              <Button
+                size="lg"
+                disabled={submitting}
+                onClick={() => void confirm("success")}
+                className="min-w-[180px]"
+              >
+                {submitting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Processing…
+                  </>
+                ) : (
+                  <>
+                    Pay {formatINR(amount)} (Demo)
+                  </>
+                )}
+              </Button>
+            </div>
+
+            <div className="mt-4 text-center">
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => void confirm("fail")}
+                className="text-xs text-ink-muted underline-offset-2 hover:underline disabled:opacity-50"
+              >
+                Simulate a failed payment (demo)
+              </button>
+            </div>
+          </div>
+        )}
       </motion.div>
     </div>
   )

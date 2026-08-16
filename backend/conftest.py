@@ -1,14 +1,17 @@
 """Shared test fixtures for PACHOOS backend."""
 import pytest
-from django.contrib.auth import get_user_model
 from decimal import Decimal
 
-User = get_user_model()
+
+def _get_user_model():
+    from django.contrib.auth import get_user_model
+    return get_user_model()
 
 
 @pytest.fixture
 def user(db):
     """Create a regular test user."""
+    User = _get_user_model()
     return User.objects.create_user(
         phone="+919876543210",
         email="test@pachoos.com",
@@ -21,6 +24,7 @@ def user(db):
 @pytest.fixture
 def admin_user(db):
     """Create an admin test user."""
+    User = _get_user_model()
     return User.objects.create_user(
         phone="+919876543211",
         email="admin@pachoos.com",

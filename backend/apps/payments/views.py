@@ -11,6 +11,7 @@ from rest_framework.views import APIView
 
 from apps.core.permissions import IsAdmin, IsCustomer
 from apps.orders.models import Order
+from apps.orders.serializers import OrderSerializer
 from apps.orders.services import record_payment
 from apps.payments.models import BankAccount, Invoice, Payment, Refund
 from apps.payments.serializers import (
@@ -22,6 +23,7 @@ from apps.payments.serializers import (
     RefundRequestSerializer,
     RefundSerializer,
 )
+from apps.payments.services import process_demo_payment
 
 
 def _resolve_shop(request):
@@ -32,6 +34,93 @@ def _resolve_shop(request):
 
         shop = Shop.objects.first()
     return shop
+
+
+class DemoPaymentView(APIView):
+    """Demo Payment — simulate a successful or failed payment for an order.
+
+    POST ``{order_id, method, simulate}`` where ``simulate`` is
+    ``"success"`` (default) or ``"fail"``.
+
+    This is a **simulation only** — no real money moves. It creates/updates the
+    Payment record, confirms the order, deducts stock and credits cashback via
+    the idempotent confirmers in ``apps.orders.services``.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: HttpRequest) -> Response:
+        order_id = request.data.get("order_id")
+        method = request.data.get("method", "demo_upi")
+        simulate = request.data.get("simulate", "success")
+
+        if simulate not in ("success", "fail"):
+            return Response(
+                {"error": {"message": "simulate must be 'success' or 'fail'."}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            order = Order.objects.get(id=order_id, user=request.user)
+        except (Order.DoesNotExist, ValueError, TypeError):
+            return Response(
+                {"error": {"message": "Order not found."}},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            data = process_demo_payment(order, method=method, simulate=simulate)
+        except ValueError as e:
+            return Response(
+                {"error": {"message": str(e)}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(
+            {
+                "success": data["success"],
+                "message": data["message"],
+                "transaction_id": data["transaction_id"],
+                "payment": PaymentSerializer(data["payment"]).data
+                if data["payment"]
+                else None,
+                "order": OrderSerializer(data["order"]).data,
+            }
+        )
+
+
+class OrderPaymentStatusView(APIView):
+    """GET the payment/order status for an order (survives page refresh).
+
+    Replaces the previously broken ``/orders/{id}/payment/`` polling contract —
+    this endpoint reads the persisted Payment + Order records directly.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: HttpRequest, order_id) -> Response:
+        try:
+            order = Order.objects.get(id=order_id, user=request.user)
+        except (Order.DoesNotExist, ValueError, TypeError):
+            return Response(
+                {"error": {"message": "Order not found."}},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        payment = Payment.objects.filter(order=order).first()
+        return Response(
+            {
+                "order_id": str(order.id),
+                "order_number": order.order_number,
+                "order_status": order.status,
+                "payment_status": order.payment_status,
+                "payment_method": order.payment_method
+                or (payment.method if payment else ""),
+                "amount": str(order.grand_total),
+                "transaction_id": payment.transaction_id if payment else "",
+                "created_at": order.created_at.isoformat(),
+            }
+        )
 
 
 class RazorpayOrderView(APIView):

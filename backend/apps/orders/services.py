@@ -1,18 +1,35 @@
-"""Order services — delivery rules, coupon/voucher engine, order placement."""
+"""Order services — delivery rules, coupon/voucher engine, order placement.
+
+Order lifecycle contract (Demo Payment):
+  * ``place_order``            — snapshots the cart into an Order + OrderItems,
+                                 consumes the coupon/voucher once and clears the
+                                 cart. **No stock is deducted and no money is
+                                 taken here.**
+  * ``mark_payment_successful`` — idempotently confirms a paid payment: creates
+                                 the Payment row, marks the order paid/accepted,
+                                 deducts stock exactly once, writes the
+                                 StockMovement ledger and credits cashback once.
+  * ``mark_payment_failed``     — idempotently records a failed attempt; the
+                                 order stays pending, stock is untouched.
+"""
+from decimal import Decimal
 from typing import Any
 
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from apps.cart.models import Cart, CartItem
-from apps.catalog.models import Product
-from apps.orders.models import Order, OrderItem, OrderTimeline, Delivery
+from apps.cart.models import Cart
+from apps.orders.models import Order, OrderItem, OrderTimeline
 from apps.payments.models import Payment
-from apps.wallet.models import WalletLedger, Voucher, VoucherRedemption
-from apps.coupons.models import Coupon, CouponRedemption
 
 BUSINESS = settings.BUSINESS
+
+
+def _dec(value) -> Decimal:
+    """Coerce a float summary value into a Decimal for model fields, so the
+    in-memory attributes are the same type as what the DB stores."""
+    return Decimal(str(value))
 
 
 def calculate_delivery(
@@ -38,7 +55,7 @@ def calculate_delivery(
 
 
 def calculate_tax(subtotal: float, gst_percent: float = 5.0) -> float:
-    """Simple GST calculation."""
+    """Simple GST calculation (flat rate helper)."""
     return round(subtotal * (gst_percent / 100), 2)
 
 
@@ -47,10 +64,12 @@ def apply_coupon(subtotal: float, coupon_code: str | None, user_id: int) -> dict
     if not coupon_code:
         return {"discount": 0, "coupon": None}
 
+    from apps.coupons.models import Coupon, CouponRedemption
+
     try:
         coupon = Coupon.objects.get(code__iexact=coupon_code, is_active=True)
     except Coupon.DoesNotExist:
-        raise ValueError("Invalid coupon code.")
+        raise ValueError("Invalid coupon code.") from None
 
     now = timezone.now()
     if coupon.valid_from and now < coupon.valid_from:
@@ -83,6 +102,8 @@ def apply_voucher(subtotal: float, voucher_code: str | None, user_id: int) -> di
     if not voucher_code:
         return {"discount": 0, "voucher": None}
 
+    from apps.wallet.models import Voucher
+
     try:
         voucher = Voucher.objects.get(
             code__iexact=voucher_code,
@@ -90,13 +111,21 @@ def apply_voucher(subtotal: float, voucher_code: str | None, user_id: int) -> di
             user_id=user_id,
         )
     except Voucher.DoesNotExist:
-        raise ValueError("Invalid or expired voucher.")
+        raise ValueError("Invalid or expired voucher.") from None
 
     if voucher.expires_at and timezone.now() > voucher.expires_at:
         raise ValueError("Voucher has expired.")
 
     discount = min(float(voucher.amount), subtotal)
     return {"discount": discount, "voucher": voucher}
+
+
+def _next_order_number(shop_id: int) -> str:
+    """Daily-per-shop order number, e.g. PCH-20260814-000001 (fits max_length=32)."""
+    today = timezone.now().strftime("%Y%m%d")
+    prefix = f"PCH-{today}-"
+    count = Order.objects.filter(shop_id=shop_id, order_number__startswith=prefix).count()
+    return f"{prefix}{count + 1:06d}"
 
 
 @transaction.atomic
@@ -109,113 +138,81 @@ def place_order(
     voucher_code: str | None = None,
     payment_method: str = "upi",
 ) -> Order:
-    """Place an order from a cart. Atomic — rolls back on any failure."""
-    if not cart.items.filter(is_active=True).exists():
+    """Place an order from a cart. Atomic — rolls back on any failure.
+
+    Only snapshots the order; stock is deducted and cashback credited when the
+    payment is confirmed (see :func:`mark_payment_successful`).
+    """
+    if not cart.items.exists():
         raise ValueError("Cart is empty.")
 
-    # Verify stock for every item
-    for item in cart.items.filter(is_active=True):
+    # Verify stock for every item at order time (soft reservation).
+    for item in cart.items.select_related("product", "variant"):
         variant = item.variant or item.product
         if variant.stock_quantity < item.quantity:
             raise ValueError(
                 f"Insufficient stock for {variant.name} ({item.quantity} requested, {variant.stock_quantity} available)."
             )
 
-    # Calculate totals
-    subtotal = cart.subtotal
-    delivery = calculate_delivery(subtotal, distance_km or 1.0)
-    tax = calculate_tax(subtotal)
+    from apps.cart.services import compute_cart_summary
 
-    coupon_discount = 0.0
-    coupon = None
-    if coupon_code:
-        result = apply_coupon(subtotal, coupon_code, user.id)
-        coupon_discount = result["discount"]
-        coupon = result["coupon"]
-
-    voucher_discount = 0.0
-    voucher = None
-    if voucher_code:
-        result = apply_voucher(subtotal - coupon_discount, voucher_code, user.id)
-        voucher_discount = result["discount"]
-        voucher = result["voucher"]
-
-    grand_total = max(
-        0,
-        subtotal - coupon_discount - voucher_discount + delivery["delivery_charge"] + tax,
+    totals = compute_cart_summary(
+        cart,
+        coupon_code=coupon_code,
+        voucher_code=voucher_code,
+        distance_km=distance_km,
+        user_id=user.id,
     )
 
-    # Create order — include sequence to avoid collision per user per day
-    today = timezone.now().strftime('%Y%m%d')
-    base_prefix = f"PCH-{today}-{user.id:04d}"
-    existing_count = Order.objects.filter(
-        order_number__startswith=base_prefix
-    ).count()
-    order_number = f"{base_prefix}-{existing_count + 1:02d}"
     order = Order.objects.create(
         shop=cart.shop,
         user=user,
-        order_number=order_number,
-        subtotal=subtotal,
-        discount_total=coupon_discount + voucher_discount,
-        delivery_charge=delivery["delivery_charge"],
-        tax_total=tax,
-        grand_total=grand_total,
-        coupon_id=coupon.id if coupon else None,
-        coupon_discount=coupon_discount,
-        voucher_id=voucher.id if voucher else None,
-        voucher_discount=voucher_discount,
+        order_number=_next_order_number(cart.shop_id),
+        subtotal=_dec(totals["subtotal"]),
+        discount_total=_dec(totals["discount_total"]),
+        delivery_charge=_dec(totals["delivery_charge"]),
+        tax_total=_dec(totals["tax_total"]),
+        grand_total=_dec(totals["grand_total"]),
+        coupon_id=totals["coupon_id"],
+        coupon_discount=_dec(totals["coupon_discount"]),
+        voucher_id=totals["voucher_id"],
+        voucher_discount=_dec(totals["voucher_discount"]),
         delivery_address_id=delivery_address_id,
-        distance_km=delivery["distance_km"],
-        delivery_free=delivery["delivery_free"],
-        cashback_earned=round(grand_total / BUSINESS["CASHBACK_PER_INR"], 2),
+        distance_km=_dec(totals["distance_km"]),
+        delivery_free=totals["delivery_free"],
+        payment_method=payment_method,
+        payment_status="pending",
+        cashback_earned=_dec(
+            round(totals["grand_total"] / BUSINESS["CASHBACK_PER_INR"], 2)
+        ),
     )
 
-    # Create order items and deduct stock
-    for item in cart.items.filter(is_active=True):
-        variant = item.variant or item.product
+    # Create order items — snapshot the effective (single-discount) price.
+    for item in cart.items.select_related("product", "variant"):
         price = (
-            variant.effective_price
-            if variant
+            item.variant.effective_price
+            if item.variant_id
             else item.product.effective_price
         )
-        discount_pct = item.discount_percent
-        gst_pct = float(item.product.gst_percent) if hasattr(item.product, "gst_percent") else 0
-        gst_amt = round((price * item.quantity) * (gst_pct / 100), 2)
-        line_total = round(price * item.quantity - (price * item.quantity * (discount_pct / 100)), 2)
-
+        gst_pct = float(item.product.gst_percent or 0)
+        line_total = round(price * item.quantity, 2)
         OrderItem.objects.create(
             order=order,
             product=item.product,
-            variant=variant if variant != item.product else None,
+            variant=item.variant if item.variant_id else None,
             product_name=item.product.name,
-            variant_name=variant.name if variant and variant != item.product else "",
+            variant_name=item.variant.name if item.variant_id else "",
             quantity=item.quantity,
-            unit_price=price,
-            discount=discount_pct,
-            gst_percent=gst_pct,
-            gst_amount=gst_amt,
-            line_total=line_total,
+            unit_price=_dec(price),
+            discount=item.discount_percent,
+            gst_percent=_dec(gst_pct),
+            gst_amount=_dec(round(line_total * (gst_pct / 100), 2)),
+            line_total=_dec(line_total),
         )
 
-        # Deduct stock — only from the actual inventory source
-        if variant != item.product:
-            variant.stock_quantity -= item.quantity
-            variant.save(update_fields=["stock_quantity"])
-        else:
-            item.product.stock_quantity -= item.quantity
-            item.product.save(update_fields=["stock_quantity"])
-
-        # Stock movement
-        from apps.catalog.models import StockMovement
-        StockMovement.objects.create(
-            product=item.product,
-            variant=variant if variant != item.product else None,
-            quantity=-item.quantity,
-            reason="sale",
-            ref_order_id=order.id,
-            note=f"Order #{order.order_number}",
-        )
+    # Consume coupon / voucher exactly once (order placed = reserved).
+    _consume_coupon(totals["coupon_id"], user, order)
+    _consume_voucher(order, totals["voucher_id"], totals["voucher_discount"], user)
 
     # Record timeline
     OrderTimeline.objects.create(
@@ -234,40 +231,254 @@ def place_order(
     return order
 
 
+def _consume_coupon(coupon_id, user, order) -> None:
+    if not coupon_id:
+        return
+    from apps.coupons.models import Coupon, CouponRedemption
+
+    coupon = Coupon.objects.filter(id=coupon_id).first()
+    if coupon is None:
+        return
+    CouponRedemption.objects.create(coupon=coupon, order=order, user=user)
+    coupon.used_count = (coupon.used_count or 0) + 1
+    coupon.save(update_fields=["used_count"])
+
+
+def _consume_voucher(order, voucher_id, discount, user) -> None:
+    if not voucher_id:
+        return
+    from apps.wallet.models import Voucher, VoucherRedemption
+
+    voucher = Voucher.objects.filter(id=voucher_id).first()
+    if voucher is None:
+        return
+    voucher.status = "used"
+    voucher.used_at = timezone.now()
+    voucher.save(update_fields=["status", "used_at"])
+    VoucherRedemption.objects.create(
+        voucher=voucher,
+        order=order,
+        user=user,
+        amount_used=discount,
+    )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Payment confirmation (idempotent — safe on double-click / page refresh)
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+def _paid_payment(order) -> Payment | None:
+    return (
+        Payment.objects.filter(order=order, status__in=["paid", "captured"]).first()
+    )
+
+
 @transaction.atomic
-def record_payment(order: Order, payment_data: dict) -> Payment:
-    """Record a payment for an order."""
-    payment = Payment.objects.create(
-        order=order,
-        user=order.user,
-        razorpay_order_id=payment_data.get("razorpay_order_id", ""),
-        razorpay_payment_id=payment_data.get("razorpay_payment_id", ""),
-        razorpay_signature=payment_data.get("razorpay_signature", ""),
-        method=payment_data.get("method", "upi"),
-        amount=order.grand_total,
-        status="captured" if payment_data.get("status") == "authorized" else "created",
-        webhook_received_at=timezone.now(),
-        webhook_verified=True,
-        raw_response=payment_data,
-    )
+def mark_payment_successful(
+    order: Order,
+    *,
+    method: str,
+    provider: str = "demo",
+    transaction_id: str = "",
+    is_demo: bool = False,
+    razorpay_order_id: str = "",
+    razorpay_payment_id: str = "",
+    razorpay_signature: str = "",
+    note: str = "Payment received",
+) -> Payment:
+    """Idempotently confirm a successful payment for an order.
 
-    # Update order status
-    order.status = "accepted"
-    order.save(update_fields=["status"])
+    Repeated calls (double-click "Pay Now", page refresh after success, or a
+    webhook racing the client confirm) return the existing Payment and never
+    double-charge, double-deduct stock or double-credit cashback.
+    """
+    if order.payment_status == "paid":
+        existing = _paid_payment(order)
+        if existing:
+            return existing
 
-    # Record timeline
-    OrderTimeline.objects.create(
-        order=order,
-        status="accepted",
-        note="Payment received",
-    )
+    existing = Payment.objects.filter(order=order).first()
+    if existing and existing.status in ("paid", "captured"):
+        _apply_paid_order_state(order, existing)
+        return existing
 
-    # Credit cashback and auto-mint voucher
-    from apps.wallet.services import credit_cashback
-    credit_cashback(order)
+    if existing:
+        # Upgrade a previously failed/created attempt to paid.
+        existing.provider = provider
+        existing.is_demo = is_demo
+        existing.transaction_id = transaction_id
+        existing.method = method
+        existing.amount = order.grand_total
+        existing.status = "paid"
+        existing.razorpay_order_id = razorpay_order_id or existing.razorpay_order_id
+        existing.razorpay_payment_id = razorpay_payment_id or existing.razorpay_payment_id
+        existing.razorpay_signature = razorpay_signature or existing.razorpay_signature
+        existing.webhook_received_at = timezone.now()
+        existing.webhook_verified = True
+        existing.raw_response = {
+            "provider": provider,
+            "transaction_id": transaction_id,
+            "method": method,
+        }
+        existing.save()
+        payment = existing
+    else:
+        payment = Payment.objects.create(
+            order=order,
+            user=order.user,
+            provider=provider,
+            is_demo=is_demo,
+            transaction_id=transaction_id,
+            method=method,
+            amount=order.grand_total,
+            status="paid",
+            razorpay_order_id=razorpay_order_id,
+            razorpay_payment_id=razorpay_payment_id,
+            razorpay_signature=razorpay_signature,
+            webhook_received_at=timezone.now(),
+            webhook_verified=True,
+            raw_response={
+                "provider": provider,
+                "transaction_id": transaction_id,
+                "method": method,
+            },
+        )
 
-    # Trigger async voucher minting (eager in dev mode)
+    _apply_paid_order_state(order, payment)
+
+    # Async voucher minting (eager in dev mode).
     from apps.wallet.tasks import mint_voucher_for_user
+
     mint_voucher_for_user.delay(order.user.id, order.shop_id)
 
     return payment
+
+
+def _apply_paid_order_state(order: Order, payment: Payment) -> None:
+    """Mark the order paid and apply stock/cashback side effects — once only."""
+    order.payment_status = "paid"
+    order.payment_method = payment.method
+    if order.status == "pending":
+        order.status = "accepted"
+    order.save(update_fields=["payment_status", "payment_method", "status", "updated_at"])
+
+    if not OrderTimeline.objects.filter(
+        order=order, status="accepted", note__startswith="Payment"
+    ).exists():
+        OrderTimeline.objects.create(
+            order=order,
+            status="accepted",
+            note="Payment received",
+        )
+
+    _deduct_stock_for_order(order)
+
+    # Cashback credited exactly once after a successful payment.
+    if order.cashback_credited_at is None:
+        from apps.wallet.services import credit_cashback
+
+        credit_cashback(order)
+
+
+def _deduct_stock_for_order(order: Order) -> None:
+    """Decrease stock for every order item and write the StockMovement ledger.
+
+    Guarded by the immutable StockMovement ledger (one ``sale`` row per order),
+    so stock is never deducted twice even if confirmation is retried.
+    """
+    from apps.catalog.models import StockMovement
+
+    if StockMovement.objects.filter(ref_order_id=order.id, reason="sale").exists():
+        return
+
+    for item in order.items.select_related("product", "variant"):
+        variant = item.variant if item.variant_id else item.product
+        if variant.stock_quantity < item.quantity:
+            # Never allow negative stock — surface so the caller can react.
+            raise ValueError(
+                f"Insufficient stock for {item.product_name} "
+                f"({item.quantity} requested, {variant.stock_quantity} available)."
+            )
+        variant.stock_quantity -= item.quantity
+        variant.save(update_fields=["stock_quantity"])
+
+        StockMovement.objects.create(
+            product=item.product,
+            variant=item.variant if item.variant_id else None,
+            quantity=-item.quantity,
+            reason="sale",
+            ref_order_id=order.id,
+            note=f"Order #{order.order_number}",
+        )
+
+
+@transaction.atomic
+def mark_payment_failed(
+    order: Order,
+    *,
+    method: str = "upi",
+    provider: str = "demo",
+    transaction_id: str = "",
+    is_demo: bool = True,
+    reason: str = "",
+) -> Payment | None:
+    """Idempotently record a failed payment attempt.
+
+    The order stays pending, stock is untouched and no cashback is credited.
+    Returns the Payment row, or ``None`` if the order was already paid.
+    """
+    if order.payment_status == "paid":
+        return None
+
+    payment = Payment.objects.filter(order=order).first()
+    if payment is None:
+        payment = Payment.objects.create(
+            order=order,
+            user=order.user,
+            provider=provider,
+            is_demo=is_demo,
+            transaction_id=transaction_id,
+            method=method,
+            amount=order.grand_total,
+            status="failed",
+            webhook_received_at=timezone.now(),
+            raw_response={"reason": reason},
+        )
+    elif payment.status in ("paid", "captured"):
+        return None
+    else:
+        payment.status = "failed"
+        payment.attempts = (payment.attempts or 0) + 1
+        payment.method = method or payment.method
+        payment.save(update_fields=["status", "attempts", "method"])
+
+    if order.payment_status == "pending":
+        order.payment_status = "failed"
+        order.payment_method = payment.method or order.payment_method
+        order.save(update_fields=["payment_status", "payment_method"])
+
+    OrderTimeline.objects.create(
+        order=order,
+        status="pending",
+        note=reason or "Payment failed",
+    )
+    return payment
+
+
+def record_payment(order: Order, payment_data: dict) -> Payment:
+    """Record a successful Razorpay payment (webhook / verification path).
+
+    Idempotent — delegates to :func:`mark_payment_successful`. Kept for the
+    future real Razorpay integration; the demo flow uses the demo gateway.
+    """
+    return mark_payment_successful(
+        order,
+        method=payment_data.get("method", "upi"),
+        provider="razorpay",
+        transaction_id=payment_data.get("razorpay_payment_id", ""),
+        is_demo=False,
+        razorpay_order_id=payment_data.get("razorpay_order_id", ""),
+        razorpay_payment_id=payment_data.get("razorpay_payment_id", ""),
+        razorpay_signature=payment_data.get("razorpay_signature", ""),
+    )

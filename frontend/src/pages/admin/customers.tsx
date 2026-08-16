@@ -262,10 +262,13 @@ export default function AdminCustomers() {
       )}
 
       <div className="mt-4 mb-4 flex items-center gap-3">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-muted" />
-          <Input placeholder="Search by name, phone or email..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-10" />
-        </div>
+        <label className="relative block flex-1">
+          <span className="mb-1 block text-xs text-ink-muted">Search</span>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-muted" />
+            <Input placeholder="Name, phone or email…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-10" />
+          </div>
+        </label>
       </div>
 
       {loading ? <Loader /> : (
@@ -330,15 +333,24 @@ export default function AdminCustomers() {
                           <X className="h-4 w-4" />
                         </button>
                       </div>
-                      <div className="flex flex-col gap-2 sm:flex-row">
-                        <Input placeholder="Full name" value={editForm.full_name} onChange={(e) => setEditForm({ ...editForm, full_name: e.target.value })} />
-                        <Input
-                          placeholder="Phone (10 digits)"
-                          inputMode="numeric"
-                          value={editForm.phone}
-                          onChange={(e) => setEditForm({ ...editForm, phone: e.target.value.replace(/[^\d\s]/g, "") })}
-                        />
-                        <Input placeholder="Email (e.g. name@gmail.com)" type="email" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} />
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                        <label className="block flex-1">
+                          <span className="mb-1 block text-xs text-ink-muted">Full name</span>
+                          <Input placeholder="Customer name" value={editForm.full_name} onChange={(e) => setEditForm({ ...editForm, full_name: e.target.value })} />
+                        </label>
+                        <label className="block flex-1">
+                          <span className="mb-1 block text-xs text-ink-muted">Phone</span>
+                          <Input
+                            placeholder="10 digits"
+                            inputMode="numeric"
+                            value={editForm.phone}
+                            onChange={(e) => setEditForm({ ...editForm, phone: e.target.value.replace(/[^\d\s]/g, "") })}
+                          />
+                        </label>
+                        <label className="block flex-1">
+                          <span className="mb-1 block text-xs text-ink-muted">Email</span>
+                          <Input placeholder="name@gmail.com" type="email" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} />
+                        </label>
                         <Button size="sm" onClick={handleSaveEdit} disabled={posting}>
                           {posting && <Loader2 className="h-4 w-4 animate-spin" />} Save
                         </Button>

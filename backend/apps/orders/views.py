@@ -1,20 +1,20 @@
 """Orders views — order CRUD, checkout, timeline, delivery."""
 from django.utils import timezone
-from rest_framework import viewsets, status
+from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from apps.orders.models import Order, OrderTimeline, Delivery
-from apps.orders.serializers import (
-    OrderSerializer,
-    OrderListSerializer,
-    OrderTimelineSerializer,
-    DeliverySerializer,
-)
-from apps.orders.services import place_order, record_payment, calculate_delivery
 from apps.cart.models import Cart
-from apps.core.permissions import IsAdmin, IsAdminOrReadOnly
+from apps.core.permissions import IsAdmin
+from apps.orders.models import Delivery, Order, OrderTimeline
+from apps.orders.serializers import (
+    DeliverySerializer,
+    OrderListSerializer,
+    OrderSerializer,
+    OrderTimelineSerializer,
+)
+from apps.orders.services import place_order
 
 
 class OrderViewSet(viewsets.ModelViewSet):
@@ -28,7 +28,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         return Order.objects.filter(user=user).select_related("user", "shop").prefetch_related("items", "timeline")
 
     def get_serializer_class(self):
-        if self.action in ["list", "retrieve"]:
+        if self.action == "list":
             return OrderListSerializer
         return OrderSerializer
 

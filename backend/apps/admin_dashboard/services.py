@@ -246,7 +246,7 @@ def get_customer_detail(customer_id: int) -> dict:
     }
 
 
-def update_customer(customer_id: int, admin_user, request=None, **fields) -> "User":
+def update_customer(customer_id: int, admin_user, request=None, **fields) -> "User":  # noqa: F821
     """Safely edit a customer's *profile* details (name, phone, email, active).
 
     Only ``full_name``, ``phone``, ``email`` and ``is_active`` are honoured —
@@ -254,15 +254,14 @@ def update_customer(customer_id: int, admin_user, request=None, **fields) -> "Us
     validated and deduped against other accounts before saving. Returns the
     refreshed customer.
     """
-    from django.db.models import Q
 
     from apps.accounts.models import User
-    from apps.wallet.services import phone_key, validate_email, validate_phone
+    from apps.wallet.services import validate_email, validate_phone
 
     try:
         user = User.objects.get(id=customer_id)
     except User.DoesNotExist:
-        raise ValueError("Customer not found.")
+        raise ValueError("Customer not found.") from None
 
     if user.is_staff:
         raise ValueError("Staff accounts cannot be edited from the customer list.")
@@ -313,7 +312,7 @@ def update_customer(customer_id: int, admin_user, request=None, **fields) -> "Us
     return user
 
 
-def deactivate_customer(customer_id: int, admin_user, request=None) -> "User":
+def deactivate_customer(customer_id: int, admin_user, request=None) -> "User":  # noqa: F821
     """Soft-delete a customer: deactivates the account so it disappears from
     active lists, while *all* financial/debt/order history remains intact and
     is never modified. Returns the deactivated customer.
@@ -323,7 +322,7 @@ def deactivate_customer(customer_id: int, admin_user, request=None) -> "User":
     try:
         user = User.objects.get(id=customer_id)
     except User.DoesNotExist:
-        raise ValueError("Customer not found.")
+        raise ValueError("Customer not found.") from None
 
     if user.is_staff:
         raise ValueError("Staff accounts cannot be deleted.")
@@ -361,13 +360,99 @@ def get_all_orders(shop=None, status_filter=None, limit: int = 50) -> list:
             "user_name": o.user.full_name,
             "user_phone": o.user.phone or "",
             "status": o.status,
+            "payment_status": o.payment_status,
+            "payment_method": o.payment_method,
             "subtotal": str(o.subtotal),
+            "discount_total": str(o.discount_total),
             "delivery_charge": str(o.delivery_charge),
             "tax_total": str(o.tax_total),
             "grand_total": str(o.grand_total),
-            "payment_method": getattr(o, "payment_method", ""),
             "cancellation_reason": o.cancellation_reason or "",
             "created_at": o.created_at.isoformat(),
         }
         for o in qs[:limit]
     ]
+
+
+def get_order_detail(order_id) -> dict:
+    """Get a full admin view of a single order: customer, payment, items,
+    timeline and delivery. Every total comes from the order record so admin
+    and customer views always agree."""
+    from apps.orders.models import Delivery, Order, OrderTimeline
+    from apps.payments.models import Payment
+
+    try:
+        order = Order.objects.select_related("user").get(id=order_id)
+    except (Order.DoesNotExist, ValueError, TypeError):
+        raise ValueError("Order not found.") from None
+
+    payment = Payment.objects.filter(order=order).first()
+
+    items = [
+        {
+            "product_id": str(i.product_id),
+            "product_name": i.product.name,
+            "variant_id": str(i.variant_id) if i.variant_id else None,
+            "variant_name": i.variant.name if i.variant_id else "",
+            "quantity": i.quantity,
+            "unit_price": str(i.unit_price),
+            "line_total": str(i.line_total),
+            "tax_percent": str(i.gst_percent),
+        }
+        for i in order.items.select_related("product", "variant").all()
+    ]
+
+    timeline = [
+        {
+            "status": t.status,
+            "note": t.note or "",
+            "actor_role": t.actor_role,
+            "created_at": t.created_at.isoformat(),
+        }
+        for t in OrderTimeline.objects.filter(order=order).order_by("created_at")
+    ]
+
+    delivery = None
+    try:
+        d = Delivery.objects.get(order=order)
+        delivery = {
+            "delivery_address": d.delivery_address,
+            "distance_km": str(d.distance_km),
+            "charge": str(d.charge),
+            "status": d.status,
+        }
+    except Delivery.DoesNotExist:
+        pass
+
+    return {
+        "id": str(order.id),
+        "order_number": order.order_number,
+        "customer": {
+            "id": str(order.user.id),
+            "full_name": order.user.full_name,
+            "phone": order.user.phone or "",
+            "email": order.user.email or "",
+        },
+        "status": order.status,
+        "payment": {
+            "status": order.payment_status,
+            "method": order.payment_method,
+            "provider": payment.provider if payment else "",
+            "transaction_id": payment.transaction_id if payment else "",
+            "is_demo": payment.is_demo if payment else False,
+        },
+        "totals": {
+            "subtotal": str(order.subtotal),
+            "discount_total": str(order.discount_total),
+            "delivery_charge": str(order.delivery_charge),
+            "delivery_free": order.delivery_free,
+            "tax_total": str(order.tax_total),
+            "grand_total": str(order.grand_total),
+        },
+        "items": items,
+        "timeline": timeline,
+        "delivery": delivery,
+        "cancellation_reason": order.cancellation_reason or "",
+        "created_at": order.created_at.isoformat(),
+        "updated_at": order.updated_at.isoformat(),
+    }

@@ -14,6 +14,7 @@ from apps.admin_dashboard.services import (
     get_customer_list,
     get_dashboard_stats,
     get_low_stock_products,
+    get_order_detail,
     get_recent_orders,
     get_revenue_chart,
     get_top_products,
@@ -133,6 +134,20 @@ class AllOrdersView(APIView):
         status_filter = request.query_params.get("status")
         limit = int(request.query_params.get("limit", 50))
         return Response(get_all_orders(shop, status_filter, limit))
+
+
+class OrderDetailView(APIView):
+    """GET a full admin view of a single order (customer, payment, items,
+    timeline, delivery)."""
+
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get(self, request, order_id):
+        try:
+            data = get_order_detail(order_id)
+        except ValueError as e:
+            return Response({"error": {"message": str(e)}}, status=404)
+        return Response(data)
 
 
 class AdminNotificationsView(APIView):

@@ -24,6 +24,7 @@ from apps.catalog.models import (
     StockMovement,
     Subcategory,
     Tag,
+    Wishlist,
 )
 from apps.catalog.serializers import (
     AdminCategorySerializer,
@@ -34,6 +35,7 @@ from apps.catalog.serializers import (
     ProductListSerializer,
     SubcategorySerializer,
     TagSerializer,
+    WishlistSerializer,
 )
 from apps.catalog.services.filter import apply_filters, apply_search
 from apps.core.pagination import StandardPagination
@@ -192,10 +194,10 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
 
         page = self.paginate_queryset(qs)
         if page is not None:
-            serializer = self.get_serializer(page, many=True)
+            serializer = ProductListSerializer(page, many=True)
             return self.get_paginated_response(serializer.data)
 
-        serializer = self.get_serializer(qs, many=True)
+        serializer = ProductListSerializer(qs, many=True)
         return Response(serializer.data)
 
     @action(detail=True, methods=["get"])
@@ -605,6 +607,61 @@ class TagViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = TagSerializer
     permission_classes = [AllowAny]
     search_fields = ["name"]
+
+
+class WishlistViewSet(viewsets.ViewSet):
+    """Wishlist: list all wishlisted products, toggle (add/remove)."""
+
+    permission_classes = [AllowAny]
+
+    def list(self, request):
+        if not request.user.is_authenticated:
+            return Response([], status=200)
+        try:
+            items = Wishlist.objects.filter(user=request.user).select_related("product", "product__subcategory", "product__subcategory__category").prefetch_related("product__images")
+            serializer = WishlistSerializer(items, many=True)
+            return Response(serializer.data)
+        except Exception:
+            return Response([], status=200)
+
+    def create(self, request):
+        """Add a product to the wishlist."""
+        if not request.user.is_authenticated:
+            return Response({"error": "Authentication required."}, status=401)
+        product_id = request.data.get("product_id")
+        if not product_id:
+            return Response({"error": "product_id is required."}, status=400)
+        try:
+            product = Product.objects.get(pk=product_id)
+        except Product.DoesNotExist:
+            return Response({"error": "Product not found."}, status=404)
+        try:
+            obj, created = Wishlist.objects.get_or_create(user=request.user, product=product)
+            return Response(WishlistSerializer(obj).data, status=201 if created else 200)
+        except Exception:
+            return Response(
+                {"error": "Wishlist is not available yet. Please run database migrations."},
+                status=503,
+            )
+
+    def destroy(self, request, pk=None):
+        """Remove a product from the wishlist by product ID."""
+        if not request.user.is_authenticated:
+            return Response({"error": "Authentication required."}, status=401)
+        try:
+            product_id = int(pk)
+        except (TypeError, ValueError):
+            return Response({"error": "Invalid product ID."}, status=400)
+        try:
+            deleted, _ = Wishlist.objects.filter(user=request.user, product_id=product_id).delete()
+        except Exception:
+            return Response(
+                {"error": "Wishlist is not available yet. Please run database migrations."},
+                status=503,
+            )
+        if deleted:
+            return Response(status=204)
+        return Response({"error": "Not in wishlist."}, status=404)
 
 
 class StockMovementViewSet(viewsets.ReadOnlyModelViewSet):

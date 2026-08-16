@@ -613,20 +613,29 @@ export default function AdminDebtBook() {
           <p className="text-sm text-ink-muted mb-3">
             Create a debt record for a customer without a PACHOOS account. No login account is created. Phone must be 10 digits; email such as a Gmail address is used to avoid duplicate records.
           </p>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <Input placeholder="Full name" value={newName} onChange={(e) => setNewName(e.target.value)} />
-            <Input
-              placeholder="Phone (10 digits)"
-              value={newPhone}
-              inputMode="numeric"
-              onChange={(e) => setNewPhone(e.target.value.replace(/[^\d\s]/g, ""))}
-            />
-            <Input
-              placeholder="Email (e.g. name@gmail.com)"
-              type="email"
-              value={newEmail}
-              onChange={(e) => setNewEmail(e.target.value)}
-            />
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+            <label className="block flex-1">
+              <span className="mb-1 block text-xs text-ink-muted">Full name</span>
+              <Input placeholder="Customer name" value={newName} onChange={(e) => setNewName(e.target.value)} />
+            </label>
+            <label className="block flex-1">
+              <span className="mb-1 block text-xs text-ink-muted">Phone</span>
+              <Input
+                placeholder="10 digits"
+                value={newPhone}
+                inputMode="numeric"
+                onChange={(e) => setNewPhone(e.target.value.replace(/[^\d\s]/g, ""))}
+              />
+            </label>
+            <label className="block flex-1">
+              <span className="mb-1 block text-xs text-ink-muted">Email</span>
+              <Input
+                placeholder="name@gmail.com"
+                type="email"
+                value={newEmail}
+                onChange={(e) => setNewEmail(e.target.value)}
+              />
+            </label>
             <Button onClick={handleCreateBook} disabled={(!newName.trim() && !newPhone.trim() && !newEmail.trim()) || posting}>
               {posting && <Loader2 className="h-4 w-4 animate-spin" />} Create Book
             </Button>
@@ -642,10 +651,13 @@ export default function AdminDebtBook() {
       )}
 
       <div className="mt-4 mb-4 flex items-center gap-3">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-muted" />
-          <Input placeholder="Search name, phone or customer account..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-10" />
-        </div>
+        <label className="relative block flex-1">
+          <span className="mb-1 block text-xs text-ink-muted">Search</span>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-muted" />
+            <Input placeholder="Name, phone or account…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-10" />
+          </div>
+        </label>
       </div>
 
       {loading ? <Loader /> : (
@@ -741,15 +753,24 @@ export default function AdminDebtBook() {
                           <X className="h-4 w-4" />
                         </button>
                       </div>
-                      <div className="flex flex-col gap-2 sm:flex-row">
-                        <Input placeholder="Full name" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} />
-                        <Input
-                          placeholder="Phone (10 digits)"
-                          inputMode="numeric"
-                          value={editForm.phone}
-                          onChange={(e) => setEditForm({ ...editForm, phone: e.target.value.replace(/[^\d\s]/g, "") })}
-                        />
-                        <Input placeholder="Email (e.g. name@gmail.com)" type="email" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} />
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                        <label className="block flex-1">
+                          <span className="mb-1 block text-xs text-ink-muted">Full name</span>
+                          <Input placeholder="Customer name" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} />
+                        </label>
+                        <label className="block flex-1">
+                          <span className="mb-1 block text-xs text-ink-muted">Phone</span>
+                          <Input
+                            placeholder="10 digits"
+                            inputMode="numeric"
+                            value={editForm.phone}
+                            onChange={(e) => setEditForm({ ...editForm, phone: e.target.value.replace(/[^\d\s]/g, "") })}
+                          />
+                        </label>
+                        <label className="block flex-1">
+                          <span className="mb-1 block text-xs text-ink-muted">Email</span>
+                          <Input placeholder="name@gmail.com" type="email" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} />
+                        </label>
                         <Button size="sm" onClick={handleSaveEdit} disabled={posting}>
                           {posting && <Loader2 className="h-4 w-4 animate-spin" />} Save
                         </Button>
@@ -798,17 +819,20 @@ export default function AdminDebtBook() {
                     <p className="text-xs text-ink-muted mb-3">
                       When this offline customer creates an account, associate their existing debt with the verified account. Historical records stay unchanged.
                     </p>
-                    <div className="flex flex-col gap-2 sm:flex-row">
-                      <select
-                        value={linkUserId}
-                        onChange={(e) => setLinkUserId(e.target.value)}
-                        className="flex h-11 w-full rounded-xl border border-border bg-surface px-4 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 sm:flex-1"
-                      >
-                        <option value="">Select registered customer…</option>
-                        {customers.map((c) => (
-                          <option key={c.id} value={c.id}>{c.full_name || c.phone} ({c.phone})</option>
-                        ))}
-                      </select>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                      <label className="block flex-1">
+                        <span className="mb-1 block text-xs text-ink-muted">Registered customer</span>
+                        <select
+                          value={linkUserId}
+                          onChange={(e) => setLinkUserId(e.target.value)}
+                          className="flex h-11 w-full rounded-xl border border-border bg-surface px-4 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 sm:flex-1"
+                        >
+                          <option value="">Select registered customer…</option>
+                          {customers.map((c) => (
+                            <option key={c.id} value={c.id}>{c.full_name || c.phone} ({c.phone})</option>
+                          ))}
+                        </select>
+                      </label>
                       <Button onClick={handleLink} disabled={!linkUserId || posting}>
                         {posting && <Loader2 className="h-4 w-4 animate-spin" />} Link
                       </Button>
@@ -846,25 +870,28 @@ export default function AdminDebtBook() {
                         return (
                           <div key={i} className="rounded-xl border border-border bg-ink-subtle p-3 space-y-2">
                             <div ref={pickerRef} className="relative">
-                              <div className="flex items-center gap-2">
-                                <div className="relative flex-1">
-                                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-muted" />
-                                  <Input
-                                    placeholder="Search catalog product or type a name…"
-                                    value={line.product_name}
-                                    className="pl-10"
-                                    onChange={(e) => {
-                                      updateBillLine(i, { product_name: e.target.value, product_id: null })
-                                      setPickingLine(i)
-                                      setProductQuery(e.target.value)
-                                    }}
-                                    onFocus={() => {
-                                      setPickingLine(i)
-                                      setProductQuery(line.product_name)
-                                    }}
-                                  />
-                                </div>
-                                <button type="button" onClick={() => removeBillLine(i)} className="rounded-full p-1.5 hover:bg-danger-muted hover:text-danger" aria-label="Remove line">
+                              <div className="flex items-center justify-between">
+                                <label className="block flex-1">
+                                  <span className="mb-1 block text-xs text-ink-muted">Product</span>
+                                  <div className="relative">
+                                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-muted" />
+                                    <Input
+                                      placeholder="Search catalog or type a name…"
+                                      value={line.product_name}
+                                      className="pl-10"
+                                      onChange={(e) => {
+                                        updateBillLine(i, { product_name: e.target.value, product_id: null })
+                                        setPickingLine(i)
+                                        setProductQuery(e.target.value)
+                                      }}
+                                      onFocus={() => {
+                                        setPickingLine(i)
+                                        setProductQuery(line.product_name)
+                                      }}
+                                    />
+                                  </div>
+                                </label>
+                                <button type="button" onClick={() => removeBillLine(i)} className="ml-2 rounded-full p-1.5 hover:bg-danger-muted hover:text-danger" aria-label="Remove line">
                                   <X className="h-4 w-4" />
                                 </button>
                               </div>
@@ -890,35 +917,45 @@ export default function AdminDebtBook() {
                               )}
                             </div>
 
-                            <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-                              <Input
-                                type="number" min="0.01" step="0.01"
-                                placeholder="Qty"
-                                value={line.quantity}
-                                onChange={(e) => updateBillLine(i, { quantity: e.target.value })}
-                              />
-                              <select
-                                value={line.unit}
-                                onChange={(e) => updateBillLine(i, { unit: e.target.value as "kg" | "count" })}
-                                className="flex h-11 w-full rounded-xl border border-border bg-surface px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                              >
-                                <option value="count">count</option>
-                                <option value="kg">kg</option>
-                              </select>
-                              <Input
-                                type="number" min="0" step="0.01"
-                                placeholder="Unit price (₹)"
-                                value={line.unit_price}
-                                className="col-span-2 sm:col-span-1"
-                                onChange={(e) => updateBillLine(i, { unit_price: e.target.value })}
-                              />
-                              <Input
-                                type="number" min="0" step="0.01"
-                                placeholder="Discount (₹)"
-                                value={line.discount}
-                                className="col-span-2 sm:col-span-1"
-                                onChange={(e) => updateBillLine(i, { discount: e.target.value })}
-                              />
+                            <div className="grid grid-cols-2 gap-2 sm:grid-cols-5 sm:items-end">
+                              <label className="block">
+                                <span className="mb-1 block text-xs text-ink-muted">Qty</span>
+                                <Input
+                                  type="number" min="0.01" step="0.01"
+                                  placeholder="0"
+                                  value={line.quantity}
+                                  onChange={(e) => updateBillLine(i, { quantity: e.target.value })}
+                                />
+                              </label>
+                              <label className="block">
+                                <span className="mb-1 block text-xs text-ink-muted">Unit</span>
+                                <select
+                                  value={line.unit}
+                                  onChange={(e) => updateBillLine(i, { unit: e.target.value as "kg" | "count" })}
+                                  className="flex h-11 w-full rounded-xl border border-border bg-surface px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                                >
+                                  <option value="count">count</option>
+                                  <option value="kg">kg</option>
+                                </select>
+                              </label>
+                              <label className="block col-span-2 sm:col-span-1">
+                                <span className="mb-1 block text-xs text-ink-muted">Unit price (₹)</span>
+                                <Input
+                                  type="number" min="0" step="0.01"
+                                  placeholder="0.00"
+                                  value={line.unit_price}
+                                  onChange={(e) => updateBillLine(i, { unit_price: e.target.value })}
+                                />
+                              </label>
+                              <label className="block col-span-2 sm:col-span-1">
+                                <span className="mb-1 block text-xs text-ink-muted">Discount (₹)</span>
+                                <Input
+                                  type="number" min="0" step="0.01"
+                                  placeholder="0.00"
+                                  value={line.discount}
+                                  onChange={(e) => updateBillLine(i, { discount: e.target.value })}
+                                />
+                              </label>
                               <p className="col-span-2 sm:col-span-1 flex items-center justify-end text-sm font-semibold text-ink sm:justify-start sm:px-2">
                                 ₹{rupee(lineTotal)}
                               </p>
@@ -936,10 +973,10 @@ export default function AdminDebtBook() {
                           <p>Discount: <span className="font-medium text-ink">−₹{rupee(billTotals.discountTotal)}</span></p>
                           <p className="text-base font-bold text-ink">Bill total: ₹{rupee(billTotals.total)}</p>
                         </div>
-                        <div className="w-full sm:w-44">
-                          <label className="text-xs text-ink-muted">Amount paid now (₹)</label>
+                        <label className="block w-full sm:w-44">
+                          <span className="mb-1 block text-xs text-ink-muted">Amount paid now (₹)</span>
                           <Input type="number" min="0" step="0.01" value={amountPaid} onChange={(e) => setAmountPaid(e.target.value)} />
-                        </div>
+                        </label>
                         <div className="text-sm">
                           <p className="text-ink-muted">Remaining debt on this bill</p>
                           <p className={`text-xl font-bold ${billTotals.remaining > 0 ? "text-danger" : "text-success"}`}>₹{rupee(billTotals.remaining)}</p>
@@ -947,7 +984,10 @@ export default function AdminDebtBook() {
                       </div>
                     </div>
 
-                    <Input placeholder="Note (optional)" value={billNote} onChange={(e) => setBillNote(e.target.value)} />
+                    <label className="block">
+                      <span className="mb-1 block text-xs text-ink-muted">Note (optional)</span>
+                      <Input placeholder="Add a note for this bill" value={billNote} onChange={(e) => setBillNote(e.target.value)} />
+                    </label>
                     <Button type="submit" disabled={posting || billTotals.total <= 0}>
                       {posting && <Loader2 className="h-4 w-4 animate-spin" />} Save Bill ({rupee(billTotals.total)})
                     </Button>
@@ -958,8 +998,14 @@ export default function AdminDebtBook() {
                   <form onSubmit={(e) => { e.preventDefault(); handlePayment() }} className="rounded-2xl border border-border bg-surface p-5 space-y-3">
                     <BackButton label="Back to Debt Book" onClick={() => setShowPayment(false)} homeTo="/admin/dashboard" storeTo="/shop" />
                     <h4 className="font-semibold text-sm">Record Payment</h4>
-                    <Input type="number" min="0.01" step="0.01" placeholder="Amount received (₹)" value={payment.amount} onChange={(e) => setPayment({ ...payment, amount: e.target.value })} />
-                    <Input placeholder="Note (optional)" value={payment.note} onChange={(e) => setPayment({ ...payment, note: e.target.value })} />
+                    <label className="block">
+                      <span className="mb-1 block text-xs text-ink-muted">Amount received (₹)</span>
+                      <Input type="number" min="0.01" step="0.01" placeholder="0.00" value={payment.amount} onChange={(e) => setPayment({ ...payment, amount: e.target.value })} />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-xs text-ink-muted">Note (optional)</span>
+                      <Input placeholder="Payment note" value={payment.note} onChange={(e) => setPayment({ ...payment, note: e.target.value })} />
+                    </label>
                     <Button type="submit" variant="secondary" disabled={posting || !payment.amount}>
                       {posting && <Loader2 className="h-4 w-4 animate-spin" />} Save Payment
                     </Button>
@@ -974,10 +1020,19 @@ export default function AdminDebtBook() {
                       History is never overwritten — a signed correction entry is appended and audited. Use + to add and − to reduce.
                     </p>
                     <div className="grid gap-3 sm:grid-cols-2">
-                      <Input type="number" step="0.01" placeholder="Signed amount (e.g. -25.00)" value={adjust.amount} onChange={(e) => setAdjust({ ...adjust, amount: e.target.value })} />
-                      <Input placeholder="Reason" value={adjust.reason} onChange={(e) => setAdjust({ ...adjust, reason: e.target.value })} />
+                      <label className="block">
+                        <span className="mb-1 block text-xs text-ink-muted">Signed amount (₹)</span>
+                        <Input type="number" step="0.01" placeholder="e.g. -25.00" value={adjust.amount} onChange={(e) => setAdjust({ ...adjust, amount: e.target.value })} />
+                      </label>
+                      <label className="block">
+                        <span className="mb-1 block text-xs text-ink-muted">Reason</span>
+                        <Input placeholder="Why this correction" value={adjust.reason} onChange={(e) => setAdjust({ ...adjust, reason: e.target.value })} />
+                      </label>
                     </div>
-                    <Input placeholder="Note (optional)" value={adjust.note} onChange={(e) => setAdjust({ ...adjust, note: e.target.value })} />
+                    <label className="block">
+                      <span className="mb-1 block text-xs text-ink-muted">Note (optional)</span>
+                      <Input placeholder="Adjustment note" value={adjust.note} onChange={(e) => setAdjust({ ...adjust, note: e.target.value })} />
+                    </label>
                     <Button type="submit" variant="outline" disabled={posting || !adjust.amount}>
                       {posting && <Loader2 className="h-4 w-4 animate-spin" />} Apply Correction
                     </Button>
@@ -1046,7 +1101,10 @@ export default function AdminDebtBook() {
                     </div>
                   )}
                   <div className="mt-3 flex gap-2">
-                    <Input placeholder="Add a note for this customer…" value={noteBody} onChange={(e) => setNoteBody(e.target.value)} />
+                    <label className="block flex-1">
+                      <span className="mb-1 block text-xs text-ink-muted">Note</span>
+                      <Input placeholder="Add a note for this customer…" value={noteBody} onChange={(e) => setNoteBody(e.target.value)} />
+                    </label>
                     <Button onClick={handleNote} disabled={posting || !noteBody.trim()}>
                       {posting && <Loader2 className="h-4 w-4 animate-spin" />} Post
                     </Button>

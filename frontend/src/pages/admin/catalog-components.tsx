@@ -179,13 +179,18 @@ export function CategoryForm({
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <Input placeholder="Category name" value={name} onChange={(e) => setName(e.target.value)} />
-        <Input
-          placeholder="Description"
-          className="sm:col-span-2"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-        />
+        <label className="block">
+          <span className="mb-1 block text-xs text-ink-muted">Category name</span>
+          <Input placeholder="e.g. Fresh Produce" value={name} onChange={(e) => setName(e.target.value)} />
+        </label>
+        <label className="block sm:col-span-2">
+          <span className="mb-1 block text-xs text-ink-muted">Description</span>
+          <Input
+            placeholder="Optional short description of this category"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+          />
+        </label>
       </div>
       <div className="mt-4 flex items-center gap-3">
         <span className="text-sm text-ink-muted">Active</span>
@@ -251,47 +256,64 @@ export function VariantEditor({
       ) : (
         <div className="space-y-3">
           {variants.map((v, i) => (
-            <div key={v.id ?? i} className="grid gap-2 rounded-xl border border-border bg-surface-muted p-3 sm:grid-cols-6">
-              <Input
-                placeholder="Name (e.g. 200g)"
-                value={v.name}
-                onChange={(e) => update(i, { name: e.target.value })}
-              />
-              <Input
-                placeholder="SKU"
-                value={v.sku}
-                onChange={(e) => update(i, { sku: e.target.value })}
-              />
-              <Input
-                type="number"
-                placeholder="Price (₹)"
-                value={v.price}
-                onChange={(e) => update(i, { price: Number(e.target.value) })}
-              />
-              <Input
-                type="number"
-                placeholder="Stock"
-                value={v.stock_quantity}
-                onChange={(e) => update(i, { stock_quantity: Number(e.target.value) })}
-              />
-              <label className="flex items-center gap-2 text-sm text-ink-muted">
-                <input
-                  type="checkbox"
-                  className="h-4 w-4"
-                  checked={v.is_active}
-                  onChange={(e) => update(i, { is_active: e.target.checked })}
-                />
-                Active
-              </label>
-              <Button
-                variant="ghost"
-                size="sm"
-                type="button"
-                onClick={() => remove(i)}
-                aria-label={`Remove variant ${v.name || i + 1}`}
-              >
-                <Trash2 className="h-4 w-4 text-danger" />
-              </Button>
+            <div key={v.id ?? i} className="rounded-xl border border-border bg-surface-muted p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-xs text-ink-muted">Variant {i + 1}</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  type="button"
+                  onClick={() => remove(i)}
+                  aria-label={`Remove variant ${v.name || i + 1}`}
+                >
+                  <Trash2 className="h-4 w-4 text-danger" />
+                </Button>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-5">
+                <label className="block">
+                  <span className="mb-1 block text-xs text-ink-muted">Name</span>
+                  <Input
+                    placeholder="e.g. 200g"
+                    value={v.name}
+                    onChange={(e) => update(i, { name: e.target.value })}
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs text-ink-muted">SKU</span>
+                  <Input
+                    placeholder="SKU"
+                    value={v.sku}
+                    onChange={(e) => update(i, { sku: e.target.value })}
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs text-ink-muted">Price (₹)</span>
+                  <Input
+                    type="number"
+                    placeholder="0.00"
+                    value={v.price}
+                    onChange={(e) => update(i, { price: Number(e.target.value) })}
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs text-ink-muted">Stock</span>
+                  <Input
+                    type="number"
+                    placeholder="0"
+                    value={v.stock_quantity}
+                    onChange={(e) => update(i, { stock_quantity: Number(e.target.value) })}
+                  />
+                </label>
+                <label className="flex items-end gap-2 pb-2 text-sm text-ink-muted">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4"
+                    checked={v.is_active}
+                    onChange={(e) => update(i, { is_active: e.target.checked })}
+                  />
+                  Active
+                </label>
+              </div>
             </div>
           ))}
         </div>
@@ -523,8 +545,14 @@ export function ProductForm({
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <Input placeholder="Product name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-        <Input placeholder="PID (unique, optional)" value={form.pid} onChange={(e) => setForm({ ...form, pid: e.target.value })} />
+        <label className="block">
+          <span className="mb-1 block text-xs text-ink-muted">Product name</span>
+          <Input placeholder="e.g. Fresh Tomatoes" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-xs text-ink-muted">PID (optional)</span>
+          <Input placeholder="Unique product code" value={form.pid} onChange={(e) => setForm({ ...form, pid: e.target.value })} />
+        </label>
 
         <label className="block">
           <span className="mb-1 block text-xs text-ink-muted">Category</span>
@@ -556,24 +584,33 @@ export function ProductForm({
           )}
         </label>
 
-        <Input
-          type="number"
-          placeholder="Real price (₹)"
-          value={form.base_price}
-          onChange={(e) => setForm({ ...form, base_price: e.target.value })}
-        />
-        <Input
-          type="number"
-          placeholder="Selling price (₹)"
-          value={form.selling_price}
-          onChange={(e) => setForm({ ...form, selling_price: e.target.value })}
-        />
-        <Input
-          type="number"
-          placeholder="Stock quantity"
-          value={form.stock_quantity}
-          onChange={(e) => setForm({ ...form, stock_quantity: Number(e.target.value) })}
-        />
+        <label className="block">
+          <span className="mb-1 block text-xs text-ink-muted">Real price (₹)</span>
+          <Input
+            type="number"
+            placeholder="0.00"
+            value={form.base_price}
+            onChange={(e) => setForm({ ...form, base_price: e.target.value })}
+          />
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-xs text-ink-muted">Selling price (₹)</span>
+          <Input
+            type="number"
+            placeholder="0.00"
+            value={form.selling_price}
+            onChange={(e) => setForm({ ...form, selling_price: e.target.value })}
+          />
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-xs text-ink-muted">Stock quantity</span>
+          <Input
+            type="number"
+            placeholder="0"
+            value={form.stock_quantity}
+            onChange={(e) => setForm({ ...form, stock_quantity: Number(e.target.value) })}
+          />
+        </label>
         <label className="block">
           <span className="mb-1 block text-xs text-ink-muted">Stock unit</span>
           <select
@@ -585,22 +622,30 @@ export function ProductForm({
             <option value="count">count (piece-based)</option>
           </select>
         </label>
-        <Input
-          placeholder="Description"
-          className="sm:col-span-2"
-          value={form.description}
-          onChange={(e) => setForm({ ...form, description: e.target.value })}
-        />
-        <Input
-          placeholder="Brand (optional)"
-          value={form.brand}
-          onChange={(e) => setForm({ ...form, brand: e.target.value })}
-        />
-        <Input
-          placeholder="SKU (optional)"
-          value={form.sku}
-          onChange={(e) => setForm({ ...form, sku: e.target.value })}
-        />
+        <label className="block sm:col-span-2">
+          <span className="mb-1 block text-xs text-ink-muted">Description</span>
+          <Input
+            placeholder="Optional product description"
+            value={form.description}
+            onChange={(e) => setForm({ ...form, description: e.target.value })}
+          />
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-xs text-ink-muted">Brand (optional)</span>
+          <Input
+            placeholder="e.g. Organic Farms"
+            value={form.brand}
+            onChange={(e) => setForm({ ...form, brand: e.target.value })}
+          />
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-xs text-ink-muted">SKU (optional)</span>
+          <Input
+            placeholder="Stock keeping unit"
+            value={form.sku}
+            onChange={(e) => setForm({ ...form, sku: e.target.value })}
+          />
+        </label>
         <label className="block">
           <span className="mb-1 block text-xs text-ink-muted">Freshness</span>
           <select
@@ -622,18 +667,23 @@ export function ProductForm({
             onChange={(e) => setForm({ ...form, tags: e.target.value })}
           />
         </label>
-        <Input
-          placeholder="Ingredients (optional)"
-          className="sm:col-span-2"
-          value={form.ingredients}
-          onChange={(e) => setForm({ ...form, ingredients: e.target.value })}
-        />
-        <textarea
-          placeholder={'Nutritional info (JSON object, optional)\ne.g. {"calories":"200 kcal","protein":"5g"}'}
-          className="min-h-20 w-full rounded-xl border border-border bg-surface px-3 py-2 text-sm text-ink sm:col-span-2"
-          value={form.nutritional_info}
-          onChange={(e) => setForm({ ...form, nutritional_info: e.target.value })}
-        />
+        <label className="block sm:col-span-2">
+          <span className="mb-1 block text-xs text-ink-muted">Ingredients (optional)</span>
+          <Input
+            placeholder="Comma-separated ingredients"
+            value={form.ingredients}
+            onChange={(e) => setForm({ ...form, ingredients: e.target.value })}
+          />
+        </label>
+        <label className="block sm:col-span-2">
+          <span className="mb-1 block text-xs text-ink-muted">Nutritional info (optional)</span>
+          <textarea
+            placeholder={'JSON object, e.g. {"calories":"200 kcal","protein":"5g"}'}
+            className="min-h-20 w-full rounded-xl border border-border bg-surface px-3 py-2 text-sm text-ink"
+            value={form.nutritional_info}
+            onChange={(e) => setForm({ ...form, nutritional_info: e.target.value })}
+          />
+        </label>
         <VariantEditor
           variants={form.variants}
           onChange={(variants) => setForm((f) => ({ ...f, variants }))}

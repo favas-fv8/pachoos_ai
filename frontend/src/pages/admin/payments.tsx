@@ -189,20 +189,32 @@ export default function AdminPayments() {
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Input placeholder="Account holder name" value={form.account_holder_name} onChange={(e) => setForm({ ...form, account_holder_name: e.target.value })} />
-              <Input placeholder="Bank name" value={form.bank_name} onChange={(e) => setForm({ ...form, bank_name: e.target.value })} />
-              <Input
-                placeholder="Account number (digits only)"
-                inputMode="numeric"
-                value={form.account_number}
-                onChange={(e) => setForm({ ...form, account_number: e.target.value.replace(/[^\d\s-]/g, "") })}
-              />
-              <Input
-                placeholder="IFSC (e.g. HDFC0001234)"
-                value={form.ifsc}
-                onChange={(e) => setForm({ ...form, ifsc: e.target.value.replace(/[^A-Za-z0-9]/g, "") })}
-              />
+            <div className="grid gap-3 sm:grid-cols-2 sm:items-end">
+              <label className="block">
+                <span className="mb-1 block text-xs text-ink-muted">Account holder name</span>
+                <Input placeholder="Name on the account" value={form.account_holder_name} onChange={(e) => setForm({ ...form, account_holder_name: e.target.value })} />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-xs text-ink-muted">Bank name</span>
+                <Input placeholder="e.g. HDFC Bank" value={form.bank_name} onChange={(e) => setForm({ ...form, bank_name: e.target.value })} />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-xs text-ink-muted">Account number</span>
+                <Input
+                  placeholder="6–18 digits"
+                  inputMode="numeric"
+                  value={form.account_number}
+                  onChange={(e) => setForm({ ...form, account_number: e.target.value.replace(/[^\d\s-]/g, "") })}
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-xs text-ink-muted">IFSC</span>
+                <Input
+                  placeholder="e.g. HDFC0001234"
+                  value={form.ifsc}
+                  onChange={(e) => setForm({ ...form, ifsc: e.target.value.replace(/[^A-Za-z0-9]/g, "") })}
+                />
+              </label>
             </div>
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} className="h-4 w-4" />

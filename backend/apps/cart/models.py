@@ -34,13 +34,11 @@ class Cart(TimeStampedModel):
 
     @property
     def item_count(self) -> int:
-        return self.items.filter(is_active=True).count()
+        return self.items.count()
 
     @property
     def subtotal(self) -> float:
-        return sum(
-            item.line_total for item in self.items.filter(is_active=True)
-        )
+        return sum(item.line_total for item in self.items.all())
 
 
 class CartItem(TimeStampedModel):
@@ -72,10 +70,18 @@ class CartItem(TimeStampedModel):
 
     @property
     def line_total(self) -> float:
-        price = (
+        """Line total at the *effective* (already discounted) price.
+
+        Always recomputed from the live ``effective_price`` — never from the
+        possibly-stale stored ``unit_price`` — so the discount is applied
+        exactly once and totals can never drift from the server summary.
+        """
+        return float(self.effective_price) * self.quantity
+
+    @property
+    def effective_price(self) -> float:
+        return (
             self.variant.effective_price
             if self.variant
             else self.product.effective_price
         )
-        discount = price * (float(self.discount_percent) / 100)
-        return float(price - discount) * self.quantity

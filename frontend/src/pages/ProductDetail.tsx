@@ -22,19 +22,15 @@ import { ProductCard } from "@/components/product/ProductCard"
 import { cn, formatINR, formatRating } from "@/lib/utils"
 import { api, toApiError } from "@/lib/api/client"
 import { useAppDispatch, useAppSelector } from "@/store/hooks"
-import { pushToast } from "@/store/slices/uiSlice"
+import { pushToast, setCartItemCount } from "@/store/slices/uiSlice"
 import type { Product, ProductVariant, ProductImage } from "@/types"
 
 type CartStatus = "idle" | "adding" | "buying"
 
 /** Find the user's active cart, creating one if none exists yet. */
-async function ensureCartId(): Promise<number> {
-  const list = await api.get("/api/v1/cart/carts")
-  const data = list.data
-  const carts = Array.isArray(data) ? data : data.results
-  if (carts && carts.length > 0) return Number(carts[0].id)
-  const created = await api.post("/api/v1/cart/carts", {})
-  return Number(created.data.id)
+async function ensureCartId(): Promise<{ id: number; itemCount: number }> {
+  const res = await api.get("/api/v1/cart/carts/current/")
+  return { id: Number(res.data.id), itemCount: res.data.item_count ?? 0 }
 }
 
 export default function ProductDetail() {
@@ -139,12 +135,15 @@ export default function ProductDetail() {
       requireAuth()
       return false
     }
-    const cartId = await ensureCartId()
-    await api.post(`/api/v1/cart/carts/${cartId}/add_item`, {
+    const { id: cartId, itemCount } = await ensureCartId()
+    await api.post(`/api/v1/cart/carts/${cartId}/add_item/`, {
       product_id: product.id,
       variant_id: variant?.id ?? undefined,
       quantity,
     })
+    /* Update the cart item count in Redux so the navbar badge
+       reflects the new total immediately without page refresh. */
+    dispatch(setCartItemCount(itemCount + quantity))
     return true
   }
 
@@ -155,6 +154,9 @@ export default function ProductDetail() {
       const added = await addCurrentItemToCart()
       if (added) {
         dispatch(pushToast({ message: "Added to cart", variant: "success" }))
+        /* Refresh cart state so the navbar badge and any
+           visible cart count update immediately without page refresh. */
+        void ensureCartId()
       }
     } catch (err) {
       dispatch(pushToast({ message: toApiError(err).message, variant: "error" }))

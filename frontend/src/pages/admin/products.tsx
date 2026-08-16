@@ -423,15 +423,18 @@ export default function AdminProducts() {
           {selected.subcategories.map((s) =>
             editingSubcat?.id === s.id ? (
               <div key={s.id} className="flex items-center gap-1">
-                <Input
-                  className="h-8 w-44 rounded-full px-3 text-xs"
-                  value={editingSubcatName}
-                  onChange={(e) => setEditingSubcatName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') void handleRenameSubcategory()
-                  }}
-                  autoFocus
-                />
+                <label className="flex items-center gap-1">
+                  <span className="sr-only">Rename subcategory</span>
+                  <Input
+                    className="h-8 w-44 rounded-full px-3 text-xs"
+                    value={editingSubcatName}
+                    onChange={(e) => setEditingSubcatName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') void handleRenameSubcategory()
+                    }}
+                    autoFocus
+                  />
+                </label>
                 <Button size="sm" variant="ghost" onClick={handleRenameSubcategory} aria-label="Save subcategory">
                   <Check className="h-3 w-3 text-success" />
                 </Button>
@@ -465,15 +468,18 @@ export default function AdminProducts() {
             ),
           )}
           <div className="flex items-center gap-1">
-            <Input
-              placeholder="New subcategory…"
-              value={subName}
-              onChange={(e) => setSubName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void handleAddSubcategory()
-              }}
-              className="h-8 w-44 rounded-full px-3 text-xs"
-            />
+            <label className="flex items-center gap-1">
+              <span className="sr-only">New subcategory</span>
+              <Input
+                placeholder="New subcategory…"
+                value={subName}
+                onChange={(e) => setSubName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void handleAddSubcategory()
+                }}
+                className="h-8 w-44 rounded-full px-3 text-xs"
+              />
+            </label>
             <Button size="sm" variant="outline" onClick={handleAddSubcategory} aria-label="Add subcategory">
               <Plus className="h-3 w-3" />
             </Button>
@@ -482,66 +488,76 @@ export default function AdminProducts() {
       </div>
 
       {/* Filters */}
-      <div className="mt-4 flex flex-wrap items-center gap-3">
-        <div className="relative flex-1 min-w-52">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-muted" />
-          <Input
-            placeholder="Search products…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-10"
-          />
-        </div>
-        <select
-          className="h-11 rounded-xl border border-border bg-surface px-3 text-sm text-ink"
-          value={subcatFilter}
-          onChange={(e) => setSubcatFilter(Number(e.target.value))}
-          aria-label="Filter by subcategory"
-        >
-          <option value={0}>All subcategories</option>
-          {selected.subcategories.map((s) => (
-            <option key={s.id} value={s.id}>{s.name}</option>
-          ))}
-        </select>
-        <select
-          className="h-11 rounded-xl border border-border bg-surface px-3 text-sm text-ink"
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          aria-label="Filter by status"
-        >
-          <option value="all">All statuses</option>
-          <option value="active">Active</option>
-          <option value="inactive">Inactive</option>
-        </select>
-        <select
-          className="h-11 rounded-xl border border-border bg-surface px-3 text-sm text-ink"
-          value={stockFilter}
-          onChange={(e) => setStockFilter(e.target.value)}
-          aria-label="Filter by stock"
-        >
-          <option value="all">Any stock</option>
-          <option value="in">In stock</option>
-          <option value="out">Out of stock</option>
-        </select>
-        <div className="flex items-center gap-1">
-          <Input
-            type="number"
-            placeholder="Min ₹"
-            value={minPrice}
-            onChange={(e) => setMinPrice(e.target.value)}
-            className="h-11 w-24"
-            aria-label="Minimum price"
-          />
-          <span className="text-ink-muted">–</span>
-          <Input
-            type="number"
-            placeholder="Max ₹"
-            value={maxPrice}
-            onChange={(e) => setMaxPrice(e.target.value)}
-            className="h-11 w-24"
-            aria-label="Maximum price"
-          />
-        </div>
+      <div className="mt-4 flex flex-wrap items-end gap-3">
+        <label className="relative block flex-1 min-w-52">
+          <span className="mb-1 block text-xs text-ink-muted">Search</span>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-muted" />
+            <Input
+              placeholder="Search by name, PID or SKU…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-10"
+            />
+          </div>
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-xs text-ink-muted">Subcategory</span>
+          <select
+            className="h-11 rounded-xl border border-border bg-surface px-3 text-sm text-ink"
+            value={subcatFilter}
+            onChange={(e) => setSubcatFilter(Number(e.target.value))}
+          >
+            <option value={0}>All subcategories</option>
+            {selected.subcategories.map((s) => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </select>
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-xs text-ink-muted">Status</span>
+          <select
+            className="h-11 rounded-xl border border-border bg-surface px-3 text-sm text-ink"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+          >
+            <option value="all">All statuses</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+          </select>
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-xs text-ink-muted">Stock</span>
+          <select
+            className="h-11 rounded-xl border border-border bg-surface px-3 text-sm text-ink"
+            value={stockFilter}
+            onChange={(e) => setStockFilter(e.target.value)}
+          >
+            <option value="all">Any stock</option>
+            <option value="in">In stock</option>
+            <option value="out">Out of stock</option>
+          </select>
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-xs text-ink-muted">Selling price (₹)</span>
+          <div className="flex items-center gap-1">
+            <Input
+              type="number"
+              placeholder="Min"
+              value={minPrice}
+              onChange={(e) => setMinPrice(e.target.value)}
+              className="h-11 w-24"
+            />
+            <span className="text-ink-muted">–</span>
+            <Input
+              type="number"
+              placeholder="Max"
+              value={maxPrice}
+              onChange={(e) => setMaxPrice(e.target.value)}
+              className="h-11 w-24"
+            />
+          </div>
+        </label>
       </div>
 
       <div className="mt-4">

@@ -11,6 +11,7 @@ from apps.catalog.models import (
     ProductVariant,
     Subcategory,
     Tag,
+    Wishlist,
 )
 
 
@@ -18,6 +19,46 @@ class TagSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tag
         fields = ["id", "name", "slug"]
+
+
+class WishlistSerializer(serializers.ModelSerializer):
+    product_name = serializers.CharField(source="product.name", read_only=True)
+    product_slug = serializers.CharField(source="product.slug", read_only=True)
+    primary_image = serializers.SerializerMethodField()
+    base_price = serializers.DecimalField(
+        source="product.base_price", max_digits=10, decimal_places=2,
+        read_only=True, coerce_to_string=False,
+    )
+    effective_price = serializers.SerializerMethodField()
+    discount_percent = serializers.DecimalField(
+        source="product.discount_percent", max_digits=5, decimal_places=2,
+        read_only=True, coerce_to_string=False,
+    )
+    stock_quantity = serializers.IntegerField(source="product.stock_quantity", read_only=True)
+    is_available = serializers.BooleanField(source="product.is_available", read_only=True)
+    category_name = serializers.CharField(
+        source="product.subcategory.category.name", read_only=True,
+    )
+    subcategory_name = serializers.CharField(
+        source="product.subcategory.name", read_only=True,
+    )
+
+    class Meta:
+        model = Wishlist
+        fields = [
+            "id", "product", "product_name", "product_slug", "primary_image",
+            "base_price", "effective_price", "discount_percent",
+            "stock_quantity", "is_available", "category_name", "subcategory_name",
+            "created_at",
+        ]
+        read_only_fields = ["id", "created_at"]
+
+    def get_primary_image(self, obj: Wishlist) -> str | None:
+        img = obj.product.images.filter(is_primary=True).first() or obj.product.images.first()
+        return img.resolved_url if img else None
+
+    def get_effective_price(self, obj: Wishlist) -> float:
+        return float(obj.product.effective_price)
 
 
 class CategorySerializer(serializers.ModelSerializer):

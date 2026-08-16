@@ -1,10 +1,12 @@
 import { NavLink } from 'react-router-dom'
-import { MapPin, Search, ShoppingBag, Sun, Moon, Menu, User, Shield } from 'lucide-react'
+import { MapPin, Search, ShoppingBag, Sun, Moon, Menu, User, Shield, Heart } from 'lucide-react'
 import { HeaderLogo } from './logo'
 import { Button, ButtonLink } from '@/components/ui/button'
 import { LocationPicker } from '@/components/location/LocationPicker'
 import { useAppDispatch, useAppSelector } from '@/store/hooks'
-import { setMobileNavOpen, toggleTheme } from '@/store/slices/uiSlice'
+import { setMobileNavOpen, toggleTheme, setCartItemCount } from '@/store/slices/uiSlice'
+import { api } from '@/lib/api/client'
+import { useEffect } from 'react'
 import { isAdminRole } from '@/router/roles'
 import { useState } from 'react'
 
@@ -19,10 +21,27 @@ export function Header() {
   const user = useAppSelector((s) => s.auth.user)
   const deliveryAddress = useAppSelector((s) => s.ui.deliveryAddress)
   const mobileNavOpen = useAppSelector((s) => s.ui.mobileNavOpen)
+  const cartItemCount = useAppSelector((s) => s.ui.cartItemCount)
   const dispatch = useAppDispatch()
   const [locationOpen, setLocationOpen] = useState(false)
   const toggle = () => dispatch(setMobileNavOpen(!mobileNavOpen))
   const visibleNav = isAdminRole(user?.role) ? nav.filter((n) => n.to !== '/track') : nav
+
+  // Fetch cart item count on mount (only for authenticated users)
+  useEffect(() => {
+    if (!user) return
+    let cancelled = false
+    const loadCartCount = async () => {
+      try {
+        const res = await api.get('/api/v1/cart/carts/current/')
+        if (!cancelled) dispatch(setCartItemCount(res.data.item_count ?? 0))
+      } catch {
+        if (!cancelled) dispatch(setCartItemCount(0))
+      }
+    }
+    loadCartCount()
+    return () => { cancelled = true }
+  }, [dispatch, user])
 
   return (
     <header className="sticky top-0 z-50 border-b border-border/70 bg-background/85 backdrop-blur-xl">
@@ -74,8 +93,20 @@ export function Header() {
           <ButtonLink href="/account" variant="ghost" size="icon" aria-label="Account">
             <User className="h-4 w-4" />
           </ButtonLink>
+          <NavLink
+            to="/wishlist"
+            className="inline-flex items-center justify-center h-10 w-10 rounded-full border border-border bg-surface text-ink hover:bg-surface-muted transition-colors"
+            aria-label="Wishlist"
+          >
+            <Heart className="h-4 w-4" />
+          </NavLink>
           <ButtonLink href="/cart" variant="default" size="icon" aria-label="Cart">
             <ShoppingBag className="h-4 w-4" />
+            {cartItemCount > 0 && (
+              <span className="absolute -top-1 -right-1 rounded-full bg-primary text-white text-xs font-medium min-w-4 min-h-4">
+                {cartItemCount}
+              </span>
+            )}
           </ButtonLink>
         </div>
       </div>

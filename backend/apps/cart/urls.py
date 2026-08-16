@@ -4,7 +4,7 @@ from rest_framework.routers import DefaultRouter
 
 from apps.cart.views import CartViewSet
 
-router = DefaultRouter(trailing_slash=False)
+router = DefaultRouter()
 router.register("carts", CartViewSet, basename="cart")
 
 urlpatterns = [

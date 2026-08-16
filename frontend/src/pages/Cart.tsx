@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/input"
 import { BackButton } from "@/components/ui/back-button"
 import { api, toApiError } from "@/lib/api/client"
 import { useAppDispatch, useAppSelector } from "@/store/hooks"
-import { pushToast } from "@/store/slices/uiSlice"
+import { pushToast, setCartItemCount } from "@/store/slices/uiSlice"
 import { formatINR } from "@/lib/utils"
 import type { CartSummary } from "@/types"
 
@@ -38,12 +38,13 @@ export default function Cart() {
       cartIdRef.current = cartRes.data.id
       const summaryRes = await api.get(`/api/v1/cart/carts/${cartRes.data.id}/summary/`)
       setSummary(summaryRes.data)
+      dispatch(setCartItemCount(summaryRes.data.item_count ?? 0))
     } catch (err) {
       setError(toApiError(err).message)
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [dispatch])
 
   useEffect(() => {
     void load()

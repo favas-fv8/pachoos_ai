@@ -100,7 +100,7 @@ export function Header() {
           >
             <Heart className="h-4 w-4" />
           </NavLink>
-          <ButtonLink href="/cart" variant="default" size="icon" aria-label="Cart">
+          <ButtonLink href="/cart" variant="default" size="icon" aria-label="Cart" className="relative">
             <ShoppingBag className="h-4 w-4" />
             {cartItemCount > 0 && (
               <span className="absolute -top-1 -right-1 rounded-full bg-primary text-white text-xs font-medium min-w-4 min-h-4">

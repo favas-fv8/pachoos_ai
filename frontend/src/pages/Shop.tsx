@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
 import { motion } from "framer-motion"
-import { Search, SlidersHorizontal } from "lucide-react"
+import { Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ProductCard } from "@/components/product/ProductCard"
@@ -74,9 +74,6 @@ export default function Shop() {
               </option>
             ))}
           </select>
-          <Button variant="outline" size="icon" aria-label="Filters">
-            <SlidersHorizontal className="h-4 w-4" />
-          </Button>
         </div>
       </div>
 

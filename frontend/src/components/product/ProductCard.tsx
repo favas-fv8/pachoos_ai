@@ -47,12 +47,13 @@ export function ProductCard({ product }: ProductCardProps) {
 
     setCartStatus("adding")
     try {
-      const { id: cartId, itemCount } = await ensureCartId()
+      const { id: cartId } = await ensureCartId()
       await api.post(`/api/v1/cart/carts/${cartId}/add_item/`, {
         product_id: product.id,
         quantity: 1,
       })
-      dispatch(setCartItemCount(itemCount + 1))
+      const countRes = await api.get("/api/v1/cart/carts/current/")
+      dispatch(setCartItemCount(countRes.data.item_count ?? 0))
       dispatch(pushToast({ message: "Added to cart", variant: "success" }))
     } catch (err) {
       dispatch(pushToast({ message: toApiError(err).message, variant: "error" }))

@@ -5,17 +5,7 @@ import { ButtonLink } from "@/components/ui/button"
 import { api } from "@/lib/api/client"
 import { formatINR } from "@/lib/utils"
 import { motion } from "framer-motion"
-
-interface Product {
-  id: string
-  name: string
-  slug: string
-  base_price: string
-  discount_percent: string
-  avg_rating: number | string
-  times_sold: number
-  images?: { image_url: string; alt_text: string }[]
-}
+import type { Product } from "@/types"
 
 interface RecommendationsProps {
   productId?: string
@@ -61,39 +51,41 @@ export function Recommendations({ productId, title = "Recommended for you", limi
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.05 }}
+            className="flex"
           >
             <ButtonLink
               href={`/product/${product.slug}`}
               variant="outline"
-              className="h-full flex-col items-start rounded-2xl border border-border bg-surface p-4 text-left shadow-card hover:shadow-pop"
+              className="h-full w-full flex-col items-start justify-between rounded-2xl border border-border bg-surface p-4 text-left shadow-card hover:shadow-pop"
             >
-              <div className="mb-2 h-32 w-full overflow-hidden rounded-xl bg-ink-subtle">
-                {product.images?.[0] ? (
+              <div className="mb-2 aspect-square w-full overflow-hidden rounded-xl bg-ink-subtle">
+                {product.primary_image ? (
                   <img
-                    src={product.images[0].image_url}
-                    alt={product.images[0].alt_text || product.name}
+                    src={product.primary_image}
+                    alt={product.name}
+                    loading="lazy"
                     className="h-full w-full object-cover"
                   />
                 ) : (
-                  <div className="grid h-full w-full place-items-center text-ink-muted text-sm">
-                    No image
+                  <div className="flex h-full items-center justify-center text-4xl">
+                    🎂
                   </div>
                 )}
               </div>
               <p className="text-sm font-medium line-clamp-2">{product.name}</p>
               <div className="mt-1 flex items-center gap-2">
                 <span className="text-sm font-bold text-primary">
-                  {formatINR(parseFloat(product.base_price) * (1 - parseFloat(product.discount_percent) / 100))}
+                  {formatINR(Number(product.effective_price))}
                 </span>
-                {parseFloat(product.discount_percent) > 0 && (
+                {Number(product.discount_percent) > 0 && (
                   <span className="text-xs text-ink-muted line-through">
-                    {formatINR(parseFloat(product.base_price))}
+                    {formatINR(Number(product.base_price))}
                   </span>
                 )}
               </div>
-              {parseFloat(String(product.avg_rating)) > 0 && (
+              {product.avg_rating != null && Number(product.avg_rating) > 0 && (
                 <p className="mt-1 text-xs text-ink-muted">
-                  {"★".repeat(Math.round(parseFloat(String(product.avg_rating))))} ({product.avg_rating})
+                  {"★".repeat(Math.round(Number(product.avg_rating)))} ({product.avg_rating})
                 </p>
               )}
             </ButtonLink>

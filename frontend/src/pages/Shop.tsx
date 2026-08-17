@@ -4,6 +4,7 @@ import { Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ProductCard } from "@/components/product/ProductCard"
+import { BackButton } from "@/components/ui/back-button"
 import { api } from "@/lib/api/client"
 import type { Product } from "@/types"
 
@@ -54,6 +55,7 @@ export default function Shop() {
 
   return (
     <div className="container-px mx-auto py-8">
+      <BackButton to="/" className="mb-4" />
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="font-display text-3xl font-bold">Shop</h1>

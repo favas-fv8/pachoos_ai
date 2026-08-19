@@ -1,6 +1,6 @@
-// Payment page — Demo Payment (simulated, no real money). Replaceable by a real
-// gateway later; the confirmers in apps.orders.services are idempotent, so
-// double-clicks and page refreshes can never double-charge or double-deduct.
+// Payment page — supports both Demo Payment (simulated) and Cashfree (real sandbox).
+// The confirmers in apps.orders.services are idempotent, so double-clicks and
+// page refreshes can never double-charge or double-deduct.
 import { useState, useEffect } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { motion } from "framer-motion"
@@ -14,6 +14,7 @@ import {
   RefreshCw,
   ArrowLeft,
   ShieldCheck,
+  ExternalLink,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -47,6 +48,7 @@ export default function PaymentPage() {
   const [error, setError] = useState("")
   const [selectedMethod, setSelectedMethod] = useState<PaymentMethod>("demo_upi")
   const [submitting, setSubmitting] = useState(false)
+  const [cashfreeLoading, setCashfreeLoading] = useState(false)
 
   useEffect(() => {
     if (!orderId) return
@@ -79,7 +81,8 @@ export default function PaymentPage() {
     }
   }, [orderId])
 
-  const confirm = async (simulate: "success" | "fail") => {
+  // ── Demo payment confirmation ──────────────────────────────────────────
+  const confirmDemo = async (simulate: "success" | "fail") => {
     if (!orderId || submitting) return
     setSubmitting(true)
     setError("")
@@ -109,6 +112,73 @@ export default function PaymentPage() {
     }
   }
 
+  // ── Cashfree payment initiation ────────────────────────────────────────
+  const handleCashfreePayment = async () => {
+    if (!orderId || cashfreeLoading) return
+    setCashfreeLoading(true)
+    setError("")
+    try {
+      const res = await api.post("/api/v1/payments/cashfree/order/", {
+        order_id: orderId,
+      })
+      const { payment_session_id } = res.data
+
+      if (!payment_session_id) {
+        throw new Error("Failed to get payment session from Cashfree.")
+      }
+
+      // Load Cashfree SDK and redirect to checkout
+      loadCashfreeSDK(payment_session_id)
+    } catch (err) {
+      const apiErr = toApiError(err)
+      setError(apiErr.message)
+      setCashfreeLoading(false)
+    }
+  }
+
+  const loadCashfreeSDK = (paymentSessionId: string) => {
+    // Check if SDK is already loaded
+    if (typeof window !== "undefined" && (window as any).Cashfree) {
+      initCashfreeCheckout(paymentSessionId)
+      return
+    }
+
+    const script = document.createElement("script")
+    script.src = "https://sdk.cashfree.com/js/v3/cashfree.js"
+    script.onload = () => initCashfreeCheckout(paymentSessionId)
+    script.onerror = () => {
+      setError("Failed to load Cashfree payment SDK. Please try again.")
+      setCashfreeLoading(false)
+    }
+    document.head.appendChild(script)
+  }
+
+  const initCashfreeCheckout = (paymentSessionId: string) => {
+    try {
+      const Cashfree = (window as any).Cashfree({
+        mode: "sandbox", // Change to "production" for live
+      })
+
+      Cashfree.checkout({
+        paymentSessionId: paymentSessionId,
+        redirectTarget: "_self",
+      })
+        .then((result: any) => {
+          if (result?.error) {
+            setError(result.error.message || "Payment checkout failed. Please try again.")
+            setCashfreeLoading(false)
+          }
+        })
+        .catch(() => {
+          setError("Failed to initialize Cashfree checkout. Please try again.")
+          setCashfreeLoading(false)
+        })
+    } catch {
+      setError("Failed to initialize Cashfree checkout. Please try again.")
+      setCashfreeLoading(false)
+    }
+  }
+
   if (state === "loading") {
     return (
       <div className="container-px mx-auto py-8">
@@ -131,7 +201,7 @@ export default function PaymentPage() {
 
         <div className="mt-4 flex items-center gap-2 rounded-xl bg-ink-subtle p-3 text-xs text-ink-muted">
           <ShieldCheck className="h-4 w-4 shrink-0 text-warning" />
-          Demo Payment — this is a simulation. No real money is charged.
+          Cashfree Sandbox — test payments only. No real money is charged.
         </div>
 
         {/* ── SUCCESS ─────────────────────────────────────────────────────── */}
@@ -201,71 +271,106 @@ export default function PaymentPage() {
         {/* ── PENDING (choose method + pay) ───────────────────────────────── */}
         {state === "pending" && (
           <div className="mt-6 rounded-2xl border border-border bg-surface p-6 shadow-card">
-            <h2 className="font-display text-lg font-semibold mb-4">Choose a payment method</h2>
+            {/* ── Cashfree Primary Option ─────────────────────────────────── */}
+            <h2 className="font-display text-lg font-semibold mb-4">
+              Complete Payment
+            </h2>
 
-            <div className="space-y-2">
-              {METHODS.map((m) => {
-                const Icon = m.icon
-                return (
-                  <label
-                    key={m.value}
-                    className="flex cursor-pointer items-center gap-3 rounded-xl border border-border bg-surface px-4 py-3 text-sm transition-colors has-[:checked]:border-primary has-[:checked]:bg-primary/5"
-                  >
-                    <input
-                      type="radio"
-                      name="method"
-                      value={m.value}
-                      checked={selectedMethod === m.value}
-                      onChange={(e) => setSelectedMethod(e.target.value as PaymentMethod)}
-                      className="accent-primary"
-                    />
-                    <Icon className="h-4 w-4 text-ink-muted" />
-                    <span>{m.label}</span>
-                    {m.value === "cod" ? (
-                      <span className="ml-auto text-xs text-ink-muted">Pay at delivery</span>
-                    ) : (
-                      <span className="ml-auto text-xs text-ink-muted">Simulated</span>
-                    )}
-                  </label>
-                )
-              })}
-            </div>
+            <button
+              type="button"
+              disabled={cashfreeLoading}
+              onClick={handleCashfreePayment}
+              className="mb-4 flex w-full items-center justify-center gap-3 rounded-xl border-2 border-primary bg-primary/5 px-6 py-4 text-sm font-semibold transition-colors hover:bg-primary/10 disabled:opacity-50"
+            >
+              {cashfreeLoading ? (
+                <>
+                  <Loader2 className="h-5 w-5 animate-spin" /> Redirecting to Cashfree…
+                </>
+              ) : (
+                <>
+                  <ShieldCheck className="h-5 w-5" />
+                  Pay {formatINR(amount)} with Cashfree
+                  <ExternalLink className="h-4 w-4 text-ink-muted" />
+                </>
+              )}
+            </button>
 
-            {error && (
-              <div className="mt-4 rounded-xl bg-danger-muted p-3 text-sm text-danger">{error}</div>
-            )}
+            <p className="mb-4 text-center text-xs text-ink-muted">
+              UPI, Cards, Net Banking, Wallets — powered by Cashfree Sandbox
+            </p>
 
-            <div className="mt-6 flex items-center justify-between gap-4">
-              <Button variant="outline" onClick={() => navigate(-1)} disabled={submitting}>
-                Back
-              </Button>
-              <Button
-                size="lg"
-                disabled={submitting}
-                onClick={() => void confirm("success")}
-                className="min-w-[180px]"
-              >
-                {submitting ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Processing…
-                  </>
-                ) : (
-                  <>
-                    Pay {formatINR(amount)} (Demo)
-                  </>
+            {/* ── Demo payment fallback ──────────────────────────────────── */}
+            <div className="border-t border-border pt-4">
+              <details className="group">
+                <summary className="cursor-pointer text-xs text-ink-muted hover:text-ink transition-colors">
+                  Or use Demo Payment (simulated, no real gateway)
+                </summary>
+
+                <div className="mt-3 space-y-2">
+                  {METHODS.map((m) => {
+                    const Icon = m.icon
+                    return (
+                      <label
+                        key={m.value}
+                        className="flex cursor-pointer items-center gap-3 rounded-xl border border-border bg-surface px-4 py-3 text-sm transition-colors has-[:checked]:border-primary has-[:checked]:bg-primary/5"
+                      >
+                        <input
+                          type="radio"
+                          name="method"
+                          value={m.value}
+                          checked={selectedMethod === m.value}
+                          onChange={(e) => setSelectedMethod(e.target.value as PaymentMethod)}
+                          className="accent-primary"
+                        />
+                        <Icon className="h-4 w-4 text-ink-muted" />
+                        <span>{m.label}</span>
+                        {m.value === "cod" ? (
+                          <span className="ml-auto text-xs text-ink-muted">Pay at delivery</span>
+                        ) : (
+                          <span className="ml-auto text-xs text-ink-muted">Simulated</span>
+                        )}
+                      </label>
+                    )
+                  })}
+                </div>
+
+                {error && (
+                  <div className="mt-4 rounded-xl bg-danger-muted p-3 text-sm text-danger">{error}</div>
                 )}
-              </Button>
-            </div>
 
-            <div className="mt-4 text-center">
-              <button
-                type="button"
-                disabled={submitting}
-                onClick={() => void confirm("fail")}
-                className="text-xs text-ink-muted underline-offset-2 hover:underline disabled:opacity-50"
-              >
-                Simulate a failed payment (demo)
-              </button>
+                <div className="mt-4 flex items-center justify-between gap-4">
+                  <Button variant="outline" onClick={() => navigate(-1)} disabled={submitting}>
+                    Back
+                  </Button>
+                  <Button
+                    size="lg"
+                    disabled={submitting}
+                    onClick={() => void confirmDemo("success")}
+                    className="min-w-[180px]"
+                  >
+                    {submitting ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Processing…
+                      </>
+                    ) : (
+                      <>
+                        Pay {formatINR(amount)} (Demo)
+                      </>
+                    )}
+                  </Button>
+                </div>
+
+                <div className="mt-4 text-center">
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    onClick={() => void confirmDemo("fail")}
+                    className="text-xs text-ink-muted underline-offset-2 hover:underline disabled:opacity-50"
+                  >
+                    Simulate a failed payment (demo)
+                  </button>
+                </div>
+              </details>
             </div>
           </div>
         )}

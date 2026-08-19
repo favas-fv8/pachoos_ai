@@ -3,6 +3,9 @@ from django.urls import path
 from apps.payments.views import (
     AdminBankAccountDetailView,
     AdminBankAccountListCreateView,
+    CashfreeOrderView,
+    CashfreeVerifyView,
+    CashfreeWebhookView,
     CustomerBankAccountDetailView,
     CustomerBankAccountListCreateView,
     DemoPaymentView,
@@ -24,6 +27,10 @@ urlpatterns = [
         OrderPaymentStatusView.as_view(),
         name="order-payment-status",
     ),
+    # Cashfree PG v2 — Sandbox / Production
+    path("cashfree/order/", CashfreeOrderView.as_view(), name="cashfree-order"),
+    path("cashfree/verify/", CashfreeVerifyView.as_view(), name="cashfree-verify"),
+    path("cashfree/webhook/", CashfreeWebhookView.as_view(), name="cashfree-webhook"),
     path("refund/", RefundView.as_view(), name="refund"),
     path("invoice/<int:order_id>/", InvoiceView.as_view(), name="invoice"),
     # Bank accounts — admin shop payout accounts

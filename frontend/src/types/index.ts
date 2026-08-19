@@ -248,6 +248,7 @@ export type PaymentMethod =
   | 'demo_phonepe'
   | 'demo_paytm'
   | 'cod'
+  | 'cashfree'
 
 export interface OrderListItem {
   id: string
@@ -350,6 +351,23 @@ export interface DemoPaymentConfirmResult {
     payment_method: PaymentMethod | ''
     grand_total: string
   }
+}
+
+export interface CashfreeOrderResponse {
+  cf_order_id: string
+  payment_session_id: string
+  order_status: string
+}
+
+export interface CashfreeVerifyResponse {
+  paid: boolean
+  order_id: string
+  order_number: string
+  order_status: OrderStatus
+  payment_status: PaymentStatus
+  amount: string
+  transaction_id: string
+  message: string
 }
 
 // ── Admin orders ─────────────────────────────────────────────────────────────

@@ -79,9 +79,167 @@ class RazorpayGateway(PaymentGateway):
         raise NotImplementedError("Razorpay gateway is not connected yet.")
 
 
+class CashfreeGateway(PaymentGateway):
+    """Cashfree PG v2 — real payment via Cashfree Sandbox or Production.
+
+    Unlike demo/Razorpay charge(), Cashfree uses a redirect-based checkout:
+      1. ``create_order()`` → returns ``payment_session_id``
+      2. Frontend redirects user to Cashfree checkout
+      3. User pays on Cashfree
+      4. Cashfree redirects back → ``verify_payment()`` confirms the order
+
+    The ``charge()`` method is provided for interface completeness but
+    raises ``NotImplementedError`` — use ``create_order`` + ``verify_payment``
+    instead.
+    """
+
+    provider = "cashfree"
+
+    def charge(self, order, *, method: str = "upi", **kwargs):
+        raise NotImplementedError(
+            "Cashfree uses redirect-based checkout. Use create_order() + verify_payment()."
+        )
+
+    # ── Cashfree-specific methods ─────────────────────────────────────────
+
+    @staticmethod
+    def _headers() -> dict:
+        from django.conf import settings
+
+        return {
+            "x-client-id": settings.CF_APP_ID,
+            "x-client-secret": settings.CF_SECRET_KEY,
+            "x-api-version": settings.CF_API_VERSION,
+            "Content-Type": "application/json",
+        }
+
+    @staticmethod
+    def _base_url() -> str:
+        from django.conf import settings
+
+        return settings.CF_API_BASE.rstrip("/")
+
+    def create_order(self, order, customer_email: str = "", customer_phone: str = "") -> dict:
+        """Create a Cashfree order and return the payment session ID.
+
+        Returns::
+
+            {
+                "success": True,
+                "cf_order_id": str,
+                "payment_session_id": str,
+                "order_status": str,
+            }
+
+        Raises ``ValueError`` on API failure.
+        """
+        import requests
+        from django.conf import settings
+
+        url = f"{self._base_url()}/orders"
+        payload = {
+            "order_id": str(order.id),
+            "order_amount": float(order.grand_total),
+            "order_currency": "INR",
+            "customer_details": {
+                "customer_id": str(order.user.id),
+                "customer_email": customer_email or f"customer{order.user.id}@pachoos.local",
+                "customer_phone": customer_phone or "9999999999",
+            },
+            "order_meta": {
+                "return_url": f"{settings.CF_RETURN_URL}?order_id={order.id}",
+            },
+        }
+
+        resp = requests.post(url, json=payload, headers=self._headers(), timeout=30)
+
+        if resp.status_code not in (200, 201):
+            body = resp.text[:500]
+            if resp.status_code == 401:
+                raise ValueError(
+                    "Cashfree authentication failed. Please verify CF_APP_ID "
+                    "and CF_SECRET_KEY in your .env file are correct sandbox "
+                    "credentials from the Cashfree Dashboard."
+                )
+            raise ValueError(
+                f"Cashfree order creation failed ({resp.status_code}): {body}"
+            )
+
+        data = resp.json()
+        return {
+            "success": True,
+            "cf_order_id": data.get("cf_order_id", ""),
+            "payment_session_id": data.get("payment_session_id", ""),
+            "order_status": data.get("order_status", ""),
+        }
+
+    def verify_payment(self, order_id: str) -> dict:
+        """Fetch the latest order/payment status from Cashfree.
+
+        Args:
+            order_id: The merchant's order ID (the UUID we sent during
+                      ``create_order``), NOT the ``cf_order_id``.
+
+        Returns::
+
+            {
+                "success": bool,
+                "paid": bool,
+                "cf_order_id": str,
+                "order_status": str,
+                "payment_status": str | None,
+                "payment_method": str | None,
+                "transaction_id": str | None,
+            }
+        """
+        import requests
+
+        url = f"{self._base_url()}/orders/{order_id}"
+        resp = requests.get(url, headers=self._headers(), timeout=30)
+
+        if resp.status_code != 200:
+            return {
+                "success": False,
+                "paid": False,
+                "cf_order_id": "",
+                "order_status": "UNKNOWN",
+                "payment_status": None,
+                "payment_method": None,
+                "transaction_id": None,
+            }
+
+        data = resp.json()
+        order_status = data.get("order_status", "")
+        cf_order_id = data.get("cf_order_id", "")
+        payments = data.get("payments", [])
+
+        payment_status = None
+        payment_method = None
+        transaction_id = None
+
+        if payments:
+            latest_payment = payments[0]
+            payment_status = latest_payment.get("payment_status", "")
+            payment_method = latest_payment.get("payment_method", "")
+            transaction_id = latest_payment.get("cf_payment_id", "")
+
+        paid = order_status == "PAID"
+
+        return {
+            "success": True,
+            "paid": paid,
+            "cf_order_id": cf_order_id,
+            "order_status": order_status,
+            "payment_status": payment_status,
+            "payment_method": payment_method,
+            "transaction_id": transaction_id,
+        }
+
+
 _GATEWAYS = {
     "demo": DemoPaymentGateway,
     "razorpay": RazorpayGateway,
+    "cashfree": CashfreeGateway,
 }
 
 

@@ -239,6 +239,14 @@ GOOGLE_MAPS_API_KEY = env("GOOGLE_MAPS_API_KEY", default="")
 OPENAI_API_KEY = env("OPENAI_API_KEY", default="")
 SHOP_GSTIN = env("SHOP_GSTIN", default="")
 
+# --- Cashfree PG v2 (Sandbox / Production) -----------------------------------
+CF_APP_ID = env("CF_APP_ID", default="")
+CF_SECRET_KEY = env("CF_SECRET_KEY", default="")
+CF_API_BASE = env("CF_API_BASE", default="https://sandbox.cashfree.com/pg")
+CF_API_VERSION = env("CF_API_VERSION", default="2025-01-01")
+CF_RETURN_URL = env("CF_RETURN_URL", default="http://localhost:5173/payment/result")
+CF_WEBHOOK_SECRET = env("CF_WEBHOOK_SECRET", default="")
+
 # --- Firebase Authentication (Google identity) ------------------------------
 # Credentials must live in the environment; verification requires the Firebase
 # Admin SDK service account (there is no sandbox path).

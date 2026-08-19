@@ -167,10 +167,22 @@ export default function ProductDetail() {
 
   const handleBuyNow = async () => {
     if (cartStatus !== "idle") return
+    if (!product) return
+    if (!isAuthenticated) {
+      requireAuth()
+      return
+    }
     setCartStatus("buying")
     try {
-      const added = await addCurrentItemToCart()
-      if (added) navigate("/checkout")
+      const res = await api.post("/api/v1/orders/direct/", {
+        product_id: product.id,
+        variant_id: variant?.id ?? null,
+        quantity,
+        delivery_address_id: 0,
+        distance_km: 1.0,
+        payment_method: "cashfree",
+      })
+      navigate(`/payment/${res.data.id}`)
     } catch (err) {
       dispatch(pushToast({ message: toApiError(err).message, variant: "error" }))
       setCartStatus("idle")

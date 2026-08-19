@@ -62,12 +62,17 @@ class CartViewSet(viewsets.ModelViewSet):
         Optional query params: coupon_code, voucher_code, distance_km.
         """
         cart = self.get_object()
+        raw_distance = request.query_params.get("distance_km")
+        try:
+            distance_km = float(raw_distance) if raw_distance else None
+        except (TypeError, ValueError):
+            distance_km = None
         try:
             data = compute_cart_summary(
                 cart,
                 coupon_code=request.query_params.get("coupon_code"),
                 voucher_code=request.query_params.get("voucher_code"),
-                distance_km=request.query_params.get("distance_km"),
+                distance_km=distance_km,
                 user_id=request.user.id,
             )
         except ValueError as e:

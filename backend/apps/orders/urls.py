@@ -10,13 +10,18 @@ dict instead of the paginated list. Explicit routes keep the contract exact.
 """
 from django.urls import path
 
-from apps.orders.views import OrderViewSet, DeliveryViewSet
+from apps.orders.views import DirectOrderView, OrderViewSet, DeliveryViewSet
 
 urlpatterns = [
     path(
         "",
         OrderViewSet.as_view({"get": "list", "post": "create"}),
         name="order-list",
+    ),
+    path(
+        "direct/",
+        DirectOrderView.as_view(),
+        name="order-direct",
     ),
     path(
         "<uuid:pk>/",

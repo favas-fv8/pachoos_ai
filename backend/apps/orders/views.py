@@ -1,20 +1,24 @@
 """Orders views — order CRUD, checkout, timeline, delivery."""
+from decimal import Decimal
+
+from django.db import transaction
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
-from apps.cart.models import Cart
+from apps.catalog.models import Product, ProductVariant
 from apps.core.permissions import IsAdmin
-from apps.orders.models import Delivery, Order, OrderTimeline
+from apps.orders.models import Delivery, Order, OrderItem, OrderTimeline
 from apps.orders.serializers import (
     DeliverySerializer,
     OrderListSerializer,
     OrderSerializer,
     OrderTimelineSerializer,
 )
-from apps.orders.services import place_order
+from apps.orders.services import place_order, _dec, _next_order_number, calculate_delivery
 
 
 class OrderViewSet(viewsets.ModelViewSet):
@@ -119,3 +123,163 @@ class DeliveryViewSet(viewsets.ModelViewSet):
     queryset = Delivery.objects.all()
     serializer_class = DeliverySerializer
     permission_classes = [IsAdmin]
+
+
+class DirectOrderView(APIView):
+    """Create an order directly from a product selection (bypasses cart).
+
+    POST ``{
+        "product_id": int,
+        "variant_id": int | null,
+        "quantity": int,
+        "delivery_address_id": int,
+        "distance_km": float | null,
+        "payment_method": str
+    }``
+
+    Creates order + order items directly. No cart involved.
+    Idempotent for duplicate clicks within 1 minute.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        product_id = request.data.get("product_id")
+        variant_id = request.data.get("variant_id")
+        quantity = request.data.get("quantity", 1)
+        delivery_address_id = request.data.get("delivery_address_id", 0)
+        distance_km = request.data.get("distance_km")
+        payment_method = request.data.get("payment_method", "cashfree")
+
+        # ── Validate product ──────────────────────────────────────────────
+        if not product_id:
+            return Response(
+                {"error": {"message": "product_id is required."}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            product = Product.objects.get(pk=product_id, is_available=True)
+        except (Product.DoesNotExist, ValueError, TypeError):
+            return Response(
+                {"error": {"message": "Product not found or unavailable."}},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # ── Validate variant ──────────────────────────────────────────────
+        variant = None
+        if variant_id:
+            try:
+                variant = ProductVariant.objects.get(
+                    pk=variant_id, product=product, is_active=True
+                )
+            except (ProductVariant.DoesNotExist, ValueError, TypeError):
+                return Response(
+                    {"error": {"message": "Variant not found or unavailable."}},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+        # ── Validate quantity ─────────────────────────────────────────────
+        try:
+            quantity = int(quantity)
+        except (TypeError, ValueError):
+            quantity = 1
+        if quantity < 1:
+            quantity = 1
+
+        source = variant or product
+        if source.stock_quantity < quantity:
+            return Response(
+                {"error": {"message": f"Insufficient stock. Only {source.stock_quantity} available."}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ── Cast distance_km ──────────────────────────────────────────────
+        if distance_km is not None:
+            try:
+                distance_km = float(distance_km)
+            except (TypeError, ValueError):
+                distance_km = None
+
+        # ── Deduplicate rapid duplicate clicks ────────────────────────────
+        one_minute_ago = timezone.now() - timezone.timedelta(minutes=1)
+        existing = (
+            Order.objects.filter(
+                user=user,
+                payment_status="pending",
+                created_at__gte=one_minute_ago,
+            )
+            .filter(items__product=product)
+            .filter(items__variant=variant)
+            .first()
+        )
+        if existing:
+            return Response(
+                OrderSerializer(existing).data,
+                status=status.HTTP_200_OK,
+            )
+
+        # ── Calculate totals ──────────────────────────────────────────────
+        price = float(variant.effective_price if variant else product.effective_price)
+        base = float(variant.price if variant else product.base_price)
+        qty = quantity
+        line_total = round(price * qty, 2)
+        base_line = round(base * qty, 2)
+        product_discount = round(base_line - line_total, 2)
+        gst_pct = float(product.gst_percent or 0)
+        tax = round(line_total * gst_pct / 100, 2)
+
+        delivery = calculate_delivery(line_total, distance_km)
+        subtotal = round(line_total, 2)
+        grand_total = round(subtotal + delivery["delivery_charge"] + tax, 2)
+
+        shop = request.shop
+        if not shop:
+            from apps.shops.models import Shop
+            shop = Shop.objects.first()
+
+        # ── Create order + items atomically ───────────────────────────────
+        with transaction.atomic():
+            order = Order.objects.create(
+                shop=shop,
+                user=user,
+                order_number=_next_order_number(shop.id),
+                subtotal=_dec(subtotal),
+                discount_total=_dec(product_discount),
+                delivery_charge=_dec(delivery["delivery_charge"]),
+                tax_total=_dec(tax),
+                grand_total=_dec(grand_total),
+                delivery_address_id=delivery_address_id or 0,
+                distance_km=_dec(delivery["distance_km"]),
+                delivery_free=delivery["delivery_free"],
+                payment_method=payment_method,
+                payment_status="pending",
+                cashback_earned=_dec(
+                    round(grand_total / 100, 2)
+                ),
+            )
+
+            OrderItem.objects.create(
+                order=order,
+                product=product,
+                variant=variant,
+                product_name=product.name,
+                variant_name=variant.name if variant else "",
+                quantity=qty,
+                unit_price=_dec(price),
+                discount=Decimal(str(product.discount_percent)),
+                gst_percent=Decimal(str(gst_pct)),
+                gst_amount=_dec(tax),
+                line_total=_dec(line_total),
+            )
+
+            OrderTimeline.objects.create(
+                order=order,
+                status="pending",
+                note="Order placed via Buy Now",
+                actor_user=user,
+                actor_role=user.role,
+            )
+
+        return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)

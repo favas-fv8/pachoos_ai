@@ -12,6 +12,7 @@ const ProductDetail = lazy(() => import('@/pages/ProductDetail'))
 const Cart = lazy(() => import('@/pages/Cart'))
 const Checkout = lazy(() => import('@/pages/Checkout'))
 const Payment = lazy(() => import('@/pages/Payment'))
+const PaymentResult = lazy(() => import('@/pages/PaymentResult'))
 const Wallet = lazy(() => import('@/pages/Wallet'))
 const Account = lazy(() => import('@/pages/Account'))
 const Track = lazy(() => import('@/pages/Track'))
@@ -71,6 +72,7 @@ const router = createBrowserRouter([
           { path: 'cart', element: <Cart /> },
           { path: 'checkout', element: <RequireAuth><Checkout /></RequireAuth> },
           { path: 'payment/:orderId', element: <RequireAuth><Payment /></RequireAuth> },
+          { path: 'payment/result', element: <RequireAuth><PaymentResult /></RequireAuth> },
           { path: 'track/:orderId?', element: <Track /> },
           { path: 'wallet', element: <RequireAuth><Wallet /></RequireAuth> },
           { path: 'wishlist', element: <RequireAuth><Wishlist /></RequireAuth> },

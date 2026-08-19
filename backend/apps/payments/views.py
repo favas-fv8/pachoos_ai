@@ -1,6 +1,7 @@
 """Payment views — Razorpay order creation, webhooks, refunds, invoices."""
 import hashlib
 import hmac
+import logging
 
 from django.conf import settings
 from django.http import HttpRequest
@@ -24,6 +25,13 @@ from apps.payments.serializers import (
     RefundSerializer,
 )
 from apps.payments.services import process_demo_payment
+from apps.payments.services.cashfree import (
+    confirm_cashfree_payment,
+    handle_cashfree_webhook,
+    initiate_cashfree_payment,
+)
+
+logger = logging.getLogger("apps.payments")
 
 
 def _resolve_shop(request):
@@ -470,3 +478,206 @@ class CustomerBankAccountDetailView(APIView):
             return Response({"error": {"message": "Bank account not found."}}, status=404)
         account.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Cashfree PG v2 — Sandbox / Production checkout
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+class CashfreeOrderView(APIView):
+    """Create a Cashfree payment order and return the payment session ID.
+
+    POST ``{ order_id, customer_email?, customer_phone? }``
+
+    Returns ``{ cf_order_id, payment_session_id }`` for the frontend to
+    initialize the Cashfree checkout SDK.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: HttpRequest) -> Response:
+        order_id = request.data.get("order_id")
+        if not order_id:
+            return Response(
+                {"error": {"message": "order_id is required."}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            order = Order.objects.get(id=order_id, user=request.user)
+        except (Order.DoesNotExist, ValueError, TypeError):
+            return Response(
+                {"error": {"message": "Order not found."}},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if order.payment_status == "paid":
+            return Response(
+                {"error": {"message": "Order is already paid."}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Check if there's already a pending Cashfree order
+        existing_payment = Payment.objects.filter(
+            order=order, provider="cashfree", status__in=["created", "authorized"]
+        ).first()
+        if existing_payment and existing_payment.razorpay_order_id:
+            # Reuse existing Cashfree order if still valid
+            from apps.payments.gateway import CashfreeGateway
+
+            gw = CashfreeGateway()
+            verification = gw.verify_payment(str(order.id))
+            if verification.get("success") and verification.get("order_status") not in (
+                "EXPIRED",
+                "TERMINATED",
+            ):
+                return Response(
+                    {
+                        "cf_order_id": existing_payment.razorpay_order_id,
+                        "payment_session_id": existing_payment.razorpay_payment_id,
+                        "order_status": verification.get("order_status", ""),
+                    }
+                )
+
+        customer_email = request.data.get("customer_email", "")
+        customer_phone = request.data.get("customer_phone", "")
+        if not customer_phone and request.user.phone:
+            customer_phone = request.user.phone
+
+        try:
+            result = initiate_cashfree_payment(
+                order,
+                customer_email=customer_email,
+                customer_phone=customer_phone,
+            )
+        except ValueError as e:
+            return Response(
+                {"error": {"message": str(e)}},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        # Persist a Payment record so CashfreeVerifyView can look up the
+        # cf_order_id when the customer returns from checkout.  Reuses an
+        # existing row when one already exists for this order.
+        payment, _created = Payment.objects.update_or_create(
+            order=order,
+            defaults={
+                "user": request.user,
+                "provider": "cashfree",
+                "razorpay_order_id": result["cf_order_id"],
+                "razorpay_payment_id": result["payment_session_id"],
+                "amount": order.grand_total,
+                "status": "created",
+            },
+        )
+
+        return Response(
+            {
+                "cf_order_id": result["cf_order_id"],
+                "payment_session_id": result["payment_session_id"],
+                "order_status": result["order_status"],
+            }
+        )
+
+
+class CashfreeVerifyView(APIView):
+    """Verify Cashfree payment status after return from checkout.
+
+    GET ``/api/v1/payments/cashfree/verify/?order_id=<order_id>``
+
+    Called by the frontend when the customer returns to the return URL.
+    Idempotent — safe on page refresh.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: HttpRequest) -> Response:
+        order_id = request.query_params.get("order_id")
+        if not order_id:
+            return Response(
+                {"error": {"message": "order_id query parameter is required."}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            order = Order.objects.get(id=order_id, user=request.user)
+        except (Order.DoesNotExist, ValueError, TypeError):
+            return Response(
+                {"error": {"message": "Order not found."}},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # If already paid, return immediately
+        if order.payment_status == "paid":
+            payment = Payment.objects.filter(order=order, provider="cashfree").first()
+            return Response(
+                {
+                    "paid": True,
+                    "order_id": str(order.id),
+                    "order_number": order.order_number,
+                    "order_status": order.status,
+                    "payment_status": order.payment_status,
+                    "amount": str(order.grand_total),
+                    "transaction_id": payment.transaction_id if payment else "",
+                    "message": "Payment successful.",
+                }
+            )
+
+        # Find the Cashfree order ID from the payment record
+        payment = Payment.objects.filter(order=order, provider="cashfree").first()
+        if not payment or not payment.razorpay_order_id:
+            return Response(
+                {
+                    "paid": False,
+                    "order_id": str(order.id),
+                    "order_number": order.order_number,
+                    "payment_status": order.payment_status,
+                    "amount": str(order.grand_total),
+                    "message": "No Cashfree payment found for this order.",
+                }
+            )
+
+        # Verify with Cashfree using the merchant's order ID (not cf_order_id)
+        result = confirm_cashfree_payment(order, str(order.id))
+
+        return Response(
+            {
+                "paid": result["paid"],
+                "order_id": str(order.id),
+                "order_number": order.order_number,
+                "order_status": order.status,
+                "payment_status": order.payment_status,
+                "amount": str(order.grand_total),
+                "transaction_id": result["payment"].transaction_id if result.get("payment") else "",
+                "message": result["message"],
+            }
+        )
+
+
+class CashfreeWebhookView(APIView):
+    """Handle Cashfree webhook events (PAYMENT_SUCCESS_WEBHOOK, etc.).
+
+    Public endpoint — no authentication. Signature is verified using the
+    webhook secret.
+    """
+
+    permission_classes = []
+
+    def post(self, request: HttpRequest) -> Response:
+        payload = request.data
+        request_body = request.body
+        request_headers = {
+            "x-webhook-signature": request.headers.get("x-webhook-signature", ""),
+            "x-webhook-timestamp": request.headers.get("x-webhook-timestamp", ""),
+        }
+
+        result = handle_cashfree_webhook(payload, request_body, request_headers)
+
+        if not result["handled"]:
+            return Response(
+                {"error": {"message": result["message"]}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response({"status": "ok"})

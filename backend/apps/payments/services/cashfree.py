@@ -57,6 +57,10 @@ def verify_cashfree_payment(order_id: str) -> dict:
     return gw.verify_payment(order_id)
 
 
+TERMINAL_PAYMENT_FAILURES = ("FAILED", "USER_DROPPED", "CANCELLED", "VOID")
+TERMINAL_ORDER_FAILURES = ("EXPIRED", "TERMINATED")
+
+
 def confirm_cashfree_payment(order: Order, order_id: str = "") -> dict:
     """Verify with Cashfree and idempotently confirm or fail the order.
 
@@ -77,12 +81,17 @@ def confirm_cashfree_payment(order: Order, order_id: str = "") -> dict:
             "message": str,
             "payment": Payment | None,
             "order": Order,
+            "cf_order_status": str,
+            "cf_payment_status": str,
         }
     """
     if not order_id:
         order_id = str(order.id)
 
     verification = verify_cashfree_payment(order_id)
+
+    cf_order_status = verification.get("order_status", "")
+    cf_payment_status = verification.get("payment_status", "")
 
     if not verification.get("success"):
         logger.warning("Cashfree verification API failed for order_id=%s", order_id)
@@ -92,6 +101,8 @@ def confirm_cashfree_payment(order: Order, order_id: str = "") -> dict:
             "message": "Unable to verify payment with Cashfree. Please try again.",
             "payment": None,
             "order": order,
+            "cf_order_status": "",
+            "cf_payment_status": "",
         }
 
     if verification.get("paid"):
@@ -117,18 +128,19 @@ def confirm_cashfree_payment(order: Order, order_id: str = "") -> dict:
             "message": "Payment successful.",
             "payment": payment,
             "order": order,
+            "cf_order_status": cf_order_status,
+            "cf_payment_status": cf_payment_status,
         }
 
-    # Payment not yet completed — might be pending on Cashfree side
-    order_status = verification.get("order_status", "")
-    if order_status in ("EXPIRED", "TERMINATED"):
+    # Terminal order failure (EXPIRED / TERMINATED)
+    if cf_order_status in TERMINAL_ORDER_FAILURES:
         payment = mark_payment_failed(
             order,
             method=verification.get("payment_method") or "upi",
             provider="cashfree",
             transaction_id=order_id,
             is_demo=False,
-            reason=f"Cashfree order {order_status}",
+            reason=f"Cashfree order {cf_order_status}",
         )
         return {
             "success": True,
@@ -136,14 +148,39 @@ def confirm_cashfree_payment(order: Order, order_id: str = "") -> dict:
             "message": "Payment was not completed.",
             "payment": payment,
             "order": order,
+            "cf_order_status": cf_order_status,
+            "cf_payment_status": cf_payment_status,
         }
 
+    # Terminal payment failure (FAILED / USER_DROPPED / CANCELLED / VOID)
+    if cf_payment_status in TERMINAL_PAYMENT_FAILURES:
+        payment = mark_payment_failed(
+            order,
+            method=verification.get("payment_method") or "upi",
+            provider="cashfree",
+            transaction_id=verification.get("transaction_id") or order_id,
+            is_demo=False,
+            reason=f"Cashfree payment {cf_payment_status}",
+        )
+        return {
+            "success": True,
+            "paid": False,
+            "message": "Payment was not completed.",
+            "payment": payment,
+            "order": order,
+            "cf_order_status": cf_order_status,
+            "cf_payment_status": cf_payment_status,
+        }
+
+    # Genuinely pending — not terminal yet
     return {
         "success": True,
         "paid": False,
         "message": "Payment is still processing. Please wait or check back later.",
         "payment": None,
         "order": order,
+        "cf_order_status": cf_order_status,
+        "cf_payment_status": cf_payment_status,
     }
 
 

@@ -648,6 +648,8 @@ class CashfreeVerifyView(APIView):
                 "order_number": order.order_number,
                 "order_status": order.status,
                 "payment_status": order.payment_status,
+                "cf_order_status": result.get("cf_order_status", ""),
+                "cf_payment_status": result.get("cf_payment_status", ""),
                 "amount": str(order.grand_total),
                 "transaction_id": result["payment"].transaction_id if result.get("payment") else "",
                 "message": result["message"],

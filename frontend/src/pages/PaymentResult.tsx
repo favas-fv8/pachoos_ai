@@ -7,15 +7,17 @@ import { motion } from "framer-motion"
 import {
   CheckCircle,
   AlertCircle,
+  Clock,
   Loader2,
   ArrowLeft,
   RefreshCw,
+  XCircle,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { api, toApiError } from "@/lib/api/client"
 import { formatINR } from "@/lib/utils"
 
-type PageState = "verifying" | "paid" | "failed" | "pending" | "no-order"
+type PageState = "verifying" | "paid" | "failed" | "dropped" | "pending" | "no-order"
 
 export default function PaymentResultPage() {
   const navigate = useNavigate()
@@ -56,15 +58,33 @@ export default function PaymentResultPage() {
         if (res.data.paid) {
           setState("paid")
           setMessage(res.data.message || "Payment successful.")
+        } else if (res.data.cf_payment_status === "USER_DROPPED") {
+          // Must be checked BEFORE payment_status === "failed" because the
+          // backend sets payment_status to "failed" for all terminal failures.
+          setState("dropped")
+          setMessage(res.data.message || "Payment was cancelled.")
         } else if (
+          // Django-level failure (set by mark_payment_failed for EXPIRED/TERMINATED)
           res.data.payment_status === "failed" ||
-          res.data.order_status === "EXPIRED" ||
-          res.data.order_status === "TERMINATED"
+          // Cashfree terminal order statuses
+          res.data.cf_order_status === "EXPIRED" ||
+          res.data.cf_order_status === "TERMINATED" ||
+          // Cashfree terminal payment statuses
+          res.data.cf_payment_status === "FAILED" ||
+          res.data.cf_payment_status === "CANCELLED" ||
+          res.data.cf_payment_status === "VOID"
         ) {
           setState("failed")
           setMessage(res.data.message || "Payment was not completed.")
+        } else if (res.data.cf_payment_status === "PENDING") {
+          // Cashfree confirms payment is still processing — show pending UI immediately
+          setState("pending")
+          setMessage(
+            res.data.message ||
+              "Payment is still processing. Please wait or check back later."
+          )
         } else if (retries < maxRetries) {
-          // Payment might still be processing — retry after delay
+          // Genuinely indeterminate — retry after delay
           retries++
           setTimeout(verifyPayment, retryDelay)
         } else {
@@ -216,11 +236,36 @@ export default function PaymentResultPage() {
           </div>
         )}
 
+        {/* ── DROPPED / CANCELLED ────────────────────────────────────────── */}
+        {state === "dropped" && (
+          <div className="rounded-2xl border border-border bg-surface p-8 text-center shadow-card">
+            <div className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-full bg-warning/10">
+              <XCircle className="h-10 w-10 text-warning" />
+            </div>
+            <h1 className="font-display text-2xl font-bold">
+              Payment Cancelled
+            </h1>
+            <p className="mt-1 text-sm text-ink-muted">
+              {message || "You cancelled the payment. No money was charged."}
+            </p>
+            <div className="mt-6 flex flex-wrap justify-center gap-3">
+              {orderId && (
+                <Button onClick={() => navigate(`/payment/${orderId}`)}>
+                  <RefreshCw className="mr-2 h-4 w-4" /> Try again
+                </Button>
+              )}
+              <Button variant="outline" onClick={() => navigate("/account/orders")}>
+                My Orders
+              </Button>
+            </div>
+          </div>
+        )}
+
         {/* ── PENDING ─────────────────────────────────────────────────────── */}
         {state === "pending" && (
           <div className="rounded-2xl border border-border bg-surface p-8 text-center shadow-card">
             <div className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-full bg-warning/10">
-              <Loader2 className="h-8 w-8 animate-spin text-warning" />
+              <Clock className="h-8 w-8 text-warning" />
             </div>
             <h1 className="font-display text-2xl font-bold">
               Payment Processing

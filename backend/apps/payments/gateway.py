@@ -176,6 +176,13 @@ class CashfreeGateway(PaymentGateway):
     def verify_payment(self, order_id: str) -> dict:
         """Fetch the latest order/payment status from Cashfree.
 
+        Makes two API calls:
+        1. GET /orders/{order_id} — to get order_status (PAID / ACTIVE / EXPIRED / TERMINATED)
+        2. GET /orders/{order_id}/payments — to get payment_status (SUCCESS / FAILED / USER_DROPPED / etc.)
+
+        The Get Order API does NOT include a payments array, so a separate
+        call is required to get the actual payment-level status.
+
         Args:
             order_id: The merchant's order ID (the UUID we sent during
                       ``create_order``), NOT the ``cf_order_id``.
@@ -194,6 +201,7 @@ class CashfreeGateway(PaymentGateway):
         """
         import requests
 
+        # ── 1. Get order status ──────────────────────────────────────────
         url = f"{self._base_url()}/orders/{order_id}"
         resp = requests.get(url, headers=self._headers(), timeout=30)
 
@@ -211,17 +219,36 @@ class CashfreeGateway(PaymentGateway):
         data = resp.json()
         order_status = data.get("order_status", "")
         cf_order_id = data.get("cf_order_id", "")
-        payments = data.get("payments", [])
 
+        # ── 2. Get payment details (separate endpoint) ───────────────────
+        # The Get Order API does not return a payments array.
+        # Use the dedicated payments endpoint to get the actual payment status.
         payment_status = None
         payment_method = None
         transaction_id = None
 
-        if payments:
-            latest_payment = payments[0]
-            payment_status = latest_payment.get("payment_status", "")
-            payment_method = latest_payment.get("payment_method", "")
-            transaction_id = latest_payment.get("cf_payment_id", "")
+        try:
+            payments_url = f"{self._base_url()}/orders/{order_id}/payments"
+            payments_resp = requests.get(
+                payments_url, headers=self._headers(), timeout=30
+            )
+
+            if payments_resp.status_code == 200:
+                payments_data = payments_resp.json()
+                # Cashfree returns a list of payment objects directly
+                if isinstance(payments_data, list) and payments_data:
+                    # Take the latest payment (last in the list)
+                    latest_payment = payments_data[-1]
+                    payment_status = latest_payment.get("payment_status", "")
+                    payment_method = latest_payment.get("payment_method", "")
+                    transaction_id = latest_payment.get("cf_payment_id", "")
+            else:
+                # Payments endpoint may return 404 if no payment attempt yet
+                # In that case, payment_status stays None (genuinely pending)
+                pass
+        except requests.RequestException:
+            # If the payments call fails, fall back to order-level status only
+            pass
 
         paid = order_status == "PAID"
 

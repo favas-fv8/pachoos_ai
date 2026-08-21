@@ -59,17 +59,14 @@ export default function PaymentResultPage() {
           setState("paid")
           setMessage(res.data.message || "Payment successful.")
         } else if (res.data.cf_payment_status === "USER_DROPPED") {
-          // Must be checked BEFORE payment_status === "failed" because the
-          // backend sets payment_status to "failed" for all terminal failures.
           setState("dropped")
           setMessage(res.data.message || "Payment was cancelled.")
         } else if (
-          // Django-level failure (set by mark_payment_failed for EXPIRED/TERMINATED)
-          res.data.payment_status === "failed" ||
-          // Cashfree terminal order statuses
+          // Fresh Cashfree statuses are authoritative and must be checked
+          // BEFORE the persisted Django payment_status, which can be a stale
+          // "failed" left over from a previous attempt after Try Again.
           res.data.cf_order_status === "EXPIRED" ||
           res.data.cf_order_status === "TERMINATED" ||
-          // Cashfree terminal payment statuses
           res.data.cf_payment_status === "FAILED" ||
           res.data.cf_payment_status === "CANCELLED" ||
           res.data.cf_payment_status === "VOID"
@@ -87,6 +84,11 @@ export default function PaymentResultPage() {
           // Genuinely indeterminate — retry after delay
           retries++
           setTimeout(verifyPayment, retryDelay)
+        } else if (res.data.payment_status === "failed") {
+          // Last resort only — reached when Cashfree returned no definitive
+          // status after all retries. Never overrides a fresh Cashfree status.
+          setState("failed")
+          setMessage(res.data.message || "Payment was not completed.")
         } else {
           // Max retries reached — show pending
           setState("pending")

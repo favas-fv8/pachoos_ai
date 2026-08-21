@@ -333,6 +333,15 @@ class WalletBalanceSerializer(serializers.Serializer):
     debt_balance = serializers.DecimalField(max_digits=10, decimal_places=2)
     active_vouchers = serializers.IntegerField()
     total_cashback_earned = serializers.DecimalField(max_digits=10, decimal_places=2)
+    cashback_redeemed = serializers.DecimalField(max_digits=10, decimal_places=2)
+
+
+class RedeemCashbackSerializer(serializers.Serializer):
+    """``amount`` omitted/null → redeem the full current balance."""
+
+    amount = serializers.DecimalField(
+        max_digits=10, decimal_places=2, required=False, allow_null=True
+    )
 
 
 class RedeemVoucherSerializer(serializers.Serializer):

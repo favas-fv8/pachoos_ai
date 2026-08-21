@@ -1,37 +1,26 @@
-// Wallet page — cashback balance, voucher list, voucher redemption.
+// Wallet page — cashback balance, redemption, and history.
 import { useState, useEffect } from "react"
 import { motion } from "framer-motion"
 import { BackButton } from "@/components/ui/back-button"
 import {
   Wallet,
-  Gift,
   Clock,
-  CheckCircle,
   AlertCircle,
   Loader2,
-  Plus,
-  Ticket,
+  HandCoins,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Badge } from "@/components/ui/badge"
-import { api } from "@/lib/api/client"
+import { api, toApiError } from "@/lib/api/client"
+
+const MIN_REDEEM = 10
 
 interface WalletBalance {
   cashback_balance: string
   debt_balance: string
   active_vouchers: number
   total_cashback_earned: string
-}
-
-interface Voucher {
-  id: string
-  code: string
-  amount: string
-  status: string
-  expires_at: string | null
-  used_at: string | null
-  created_at: string
+  cashback_redeemed: string
 }
 
 interface LedgerEntry {
@@ -45,14 +34,15 @@ interface LedgerEntry {
 
 export default function WalletPage() {
   const [balance, setBalance] = useState<WalletBalance | null>(null)
-  const [vouchers, setVouchers] = useState<Voucher[]>([])
   const [history, setHistory] = useState<LedgerEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
-  const [redeemCode, setRedeemCode] = useState("")
+
+  const [redeemMode, setRedeemMode] = useState<"full" | "custom">("full")
+  const [customAmount, setCustomAmount] = useState("")
   const [redeemLoading, setRedeemLoading] = useState(false)
   const [redeemMsg, setRedeemMsg] = useState("")
-  const [mintLoading, setMintLoading] = useState(false)
+  const [redeemError, setRedeemError] = useState("")
 
   useEffect(() => {
     fetchWalletData()
@@ -62,13 +52,11 @@ export default function WalletPage() {
     setLoading(true)
     setError("")
     try {
-      const [balRes, voucherRes, historyRes] = await Promise.all([
+      const [balRes, historyRes] = await Promise.all([
         api.get("/api/v1/wallet/balance/"),
-        api.get("/api/v1/wallet/vouchers/"),
         api.get("/api/v1/wallet/history/"),
       ])
       setBalance(balRes.data)
-      setVouchers(voucherRes.data)
       setHistory(historyRes.data)
     } catch {
       setError("Failed to load wallet data.")
@@ -77,41 +65,42 @@ export default function WalletPage() {
     }
   }
 
-  const handleRedeem = async () => {
-    if (!redeemCode.trim()) return
+  const cashbackBalance = Number(balance?.cashback_balance ?? 0)
+  const eligible = cashbackBalance >= MIN_REDEEM
+  const parsedCustom = Number(customAmount)
+  const customValid =
+    redeemMode === "full" ||
+    (customAmount.trim() !== "" &&
+      Number.isFinite(parsedCustom) &&
+      parsedCustom >= MIN_REDEEM &&
+      parsedCustom <= cashbackBalance)
+
+  // Redemption entries (manual redemptions + legacy voucher mints) all read
+  // "Redeemed Cashback" with the actual redeemed amount.
+  const historyTitle = (entry: LedgerEntry) =>
+    entry.reason === "cashback_redeemed" || entry.reason === "voucher_mint"
+      ? "Redeemed Cashback"
+      : entry.note || entry.reason
+
+  const handleRedeemCashback = async () => {
+    if (!eligible || !customValid || redeemLoading) return
     setRedeemLoading(true)
     setRedeemMsg("")
+    setRedeemError("")
     try {
-      const res = await api.post("/api/v1/wallet/vouchers/redeem/", {
-        voucher_code: redeemCode,
-        order_id: "00000000-0000-0000-0000-000000000000",
-      })
+      const payload =
+        redeemMode === "full" ? {} : { amount: parsedCustom }
+      const res = await api.post("/api/v1/wallet/cashback/redeem/", payload)
       setRedeemMsg(res.data.message)
-      setRedeemCode("")
-      fetchWalletData()
-    } catch (err: any) {
-      setRedeemMsg(err?.response?.data?.error?.message || "Redemption failed.")
+      setCustomAmount("")
+      await fetchWalletData()
+    } catch (err) {
+      setRedeemError(
+        toApiError(err).message || "Redemption failed. Please try again.",
+      )
     } finally {
       setRedeemLoading(false)
     }
-  }
-
-  const handleMint = async () => {
-    setMintLoading(true)
-    try {
-      await api.post("/api/v1/wallet/vouchers/mint/")
-      fetchWalletData()
-    } catch (err: any) {
-      setError(err?.response?.data?.error?.message || "Minting failed.")
-    } finally {
-      setMintLoading(false)
-    }
-  }
-
-  const statusColor = (s: string) => {
-    if (s === "active") return "success"
-    if (s === "used") return "secondary"
-    return "danger"
   }
 
   if (loading) {
@@ -162,11 +151,11 @@ export default function WalletPage() {
         >
           <div className="flex items-center gap-3">
             <div className="grid h-10 w-10 place-items-center rounded-xl bg-primary/10 text-primary">
-              <Ticket className="h-5 w-5" />
+              <HandCoins className="h-5 w-5" />
             </div>
             <div>
-              <p className="text-sm text-ink-muted">Active Vouchers</p>
-              <p className="text-2xl font-bold">{balance?.active_vouchers || 0}</p>
+              <p className="text-sm text-ink-muted">Cashback Redeemed</p>
+              <p className="text-2xl font-bold">₹{balance?.cashback_redeemed || "0.00"}</p>
             </div>
           </div>
         </motion.div>
@@ -179,7 +168,7 @@ export default function WalletPage() {
         >
           <div className="flex items-center gap-3">
             <div className="grid h-10 w-10 place-items-center rounded-xl bg-warning/10 text-warning">
-              <Gift className="h-5 w-5" />
+              <Clock className="h-5 w-5" />
             </div>
             <div>
               <p className="text-sm text-ink-muted">Total Earned</p>
@@ -189,69 +178,76 @@ export default function WalletPage() {
         </motion.div>
       </div>
 
-      {/* Mint + Redeem Actions */}
-      <div className="mt-6 grid gap-4 sm:grid-cols-2">
-        <section className="rounded-2xl border border-border bg-surface p-6 shadow-card">
-          <h2 className="font-display text-lg font-semibold mb-3 flex items-center gap-2">
-            <Plus className="h-5 w-5 text-primary" /> Mint Voucher
-          </h2>
-          <p className="text-sm text-ink-muted mb-3">
-            Convert ₹10 cashback into a voucher. Vouchers expire in 60 days.
-          </p>
-          <Button onClick={handleMint} disabled={mintLoading} className="w-full">
-            {mintLoading ? (
-              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Minting...</>
-            ) : (
-              "Mint ₹10 Voucher"
-            )}
-          </Button>
-        </section>
-
-        <section className="rounded-2xl border border-border bg-surface p-6 shadow-card">
-          <h2 className="font-display text-lg font-semibold mb-3 flex items-center gap-2">
-            <Gift className="h-5 w-5 text-primary" /> Redeem Voucher
-          </h2>
-          <div className="flex gap-2">
-            <Input
-              placeholder="Enter voucher code"
-              value={redeemCode}
-              onChange={(e) => setRedeemCode(e.target.value)}
-            />
-            <Button onClick={handleRedeem} disabled={redeemLoading} variant="outline">
-              {redeemLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Apply"}
-            </Button>
-          </div>
-          {redeemMsg && (
-            <p className="mt-2 text-sm text-success">{redeemMsg}</p>
-          )}
-        </section>
-      </div>
-
-      {/* Vouchers List */}
+      {/* Redeem Cashback */}
       <section className="mt-6 rounded-2xl border border-border bg-surface p-6 shadow-card">
-        <h2 className="font-display text-lg font-semibold mb-4 flex items-center gap-2">
-          <Ticket className="h-5 w-5 text-primary" /> My Vouchers
+        <h2 className="font-display text-lg font-semibold mb-3 flex items-center gap-2">
+          <HandCoins className="h-5 w-5 text-primary" /> Redeem Cashback
         </h2>
-        {vouchers.length === 0 ? (
-          <p className="text-sm text-ink-muted">No vouchers yet. Earn cashback to mint one!</p>
+
+        {!eligible ? (
+          <p className="text-sm text-ink-muted mb-3">
+            You need at least ₹{MIN_REDEEM} cashback to redeem. Keep earning!
+          </p>
         ) : (
-          <div className="space-y-3">
-            {vouchers.map((v) => (
-              <div key={v.id} className="flex items-center justify-between rounded-xl bg-ink-subtle p-4">
-                <div>
-                  <p className="font-mono font-semibold">{v.code}</p>
-                  <p className="text-xs text-ink-muted">
-                    ₹{v.amount} • Expires: {v.expires_at ? new Date(v.expires_at).toLocaleDateString() : "Never"}
-                  </p>
-                </div>
-                <Badge variant={statusColor(v.status) as any}>
-                  {v.status === "active" && <CheckCircle className="mr-1 h-3 w-3" />}
-                  {v.status}
-                </Badge>
-              </div>
+          <div className="mb-3 flex flex-wrap gap-2">
+            {(["full", "custom"] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => {
+                  setRedeemMode(mode)
+                  setRedeemMsg("")
+                  setRedeemError("")
+                }}
+                className={`rounded-full px-4 py-1.5 text-xs font-medium transition-colors ${
+                  redeemMode === mode
+                    ? "bg-primary text-primary-foreground"
+                    : "border border-border bg-surface text-ink-muted hover:bg-surface-muted"
+                }`}
+              >
+                {mode === "full" ? `Full balance (₹${balance?.cashback_balance})` : "Custom amount"}
+              </button>
             ))}
           </div>
         )}
+
+        {eligible && redeemMode === "custom" && (
+          <div className="mb-3 max-w-xs">
+            <Input
+              type="number"
+              min={MIN_REDEEM}
+              max={cashbackBalance}
+              step="0.01"
+              placeholder={`Min ₹${MIN_REDEEM}, max ₹${balance?.cashback_balance}`}
+              value={customAmount}
+              onChange={(e) => {
+                setCustomAmount(e.target.value)
+                setRedeemMsg("")
+                setRedeemError("")
+              }}
+            />
+            {customAmount.trim() !== "" && !customValid && (
+              <p className="mt-1 text-xs text-danger">
+                Enter between ₹{MIN_REDEEM} and ₹{balance?.cashback_balance}.
+              </p>
+            )}
+          </div>
+        )}
+
+        <Button
+          onClick={handleRedeemCashback}
+          disabled={!eligible || !customValid || redeemLoading}
+          className="w-full sm:w-auto"
+        >
+          {redeemLoading ? (
+            <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Redeeming...</>
+          ) : (
+            "Redeem Cashback"
+          )}
+        </Button>
+
+        {redeemMsg && <p className="mt-2 text-sm text-success">{redeemMsg}</p>}
+        {redeemError && <p className="mt-2 text-sm text-danger">{redeemError}</p>}
       </section>
 
       {/* Ledger History */}
@@ -266,13 +262,13 @@ export default function WalletPage() {
             {history.map((h) => (
               <div key={h.id} className="flex items-center justify-between rounded-xl bg-ink-subtle px-4 py-3">
                 <div>
-                  <p className="text-sm font-medium">{h.note || h.reason}</p>
+                  <p className="text-sm font-medium">{historyTitle(h)}</p>
                   <p className="text-xs text-ink-muted">
                     {new Date(h.created_at).toLocaleDateString()}
                   </p>
                 </div>
                 <span className={`font-semibold ${parseFloat(h.delta) >= 0 ? "text-success" : "text-danger"}`}>
-                  {parseFloat(h.delta) >= 0 ? "+" : ""}₹{h.delta}
+                  {parseFloat(h.delta) >= 0 ? "+" : "−"}₹{Math.abs(parseFloat(h.delta)).toFixed(2)}
                 </span>
               </div>
             ))}

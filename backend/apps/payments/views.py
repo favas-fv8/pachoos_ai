@@ -25,6 +25,7 @@ from apps.payments.serializers import (
     RefundSerializer,
 )
 from apps.payments.services import process_demo_payment
+from apps.payments.gateway import normalize_payment_method
 from apps.payments.services.cashfree import (
     confirm_cashfree_payment,
     handle_cashfree_webhook,
@@ -122,8 +123,9 @@ class OrderPaymentStatusView(APIView):
                 "order_number": order.order_number,
                 "order_status": order.status,
                 "payment_status": order.payment_status,
-                "payment_method": order.payment_method
-                or (payment.method if payment else ""),
+                "payment_method": normalize_payment_method(
+                    order.payment_method or (payment.method if payment else "")
+                ),
                 "amount": str(order.grand_total),
                 "transaction_id": payment.transaction_id if payment else "",
                 "created_at": order.created_at.isoformat(),
@@ -527,7 +529,13 @@ class CashfreeOrderView(APIView):
             from apps.payments.gateway import CashfreeGateway
 
             gw = CashfreeGateway()
-            verification = gw.verify_payment(str(order.id))
+            # Use the stored merchant order ID for verification
+            merchant_order_id = str(order.id)
+            if existing_payment.raw_response:
+                merchant_order_id = existing_payment.raw_response.get(
+                    "cashfree_merchant_order_id", str(order.id)
+                )
+            verification = gw.verify_payment(merchant_order_id)
             if verification.get("success") and verification.get("order_status") not in (
                 "EXPIRED",
                 "TERMINATED",
@@ -569,6 +577,9 @@ class CashfreeOrderView(APIView):
                 "razorpay_payment_id": result["payment_session_id"],
                 "amount": order.grand_total,
                 "status": "created",
+                "raw_response": {
+                    "cashfree_merchant_order_id": result.get("order_id", str(order.id)),
+                },
             },
         )
 
@@ -638,8 +649,15 @@ class CashfreeVerifyView(APIView):
                 }
             )
 
-        # Verify with Cashfree using the merchant's order ID (not cf_order_id)
-        result = confirm_cashfree_payment(order, str(order.id))
+        # Verify with Cashfree using the stored merchant order ID
+        # (not the original PACHOOS order.id, which may differ from
+        # the unique Cashfree order ID used for this payment attempt).
+        cashfree_order_id = str(order.id)
+        if payment.raw_response:
+            cashfree_order_id = payment.raw_response.get(
+                "cashfree_merchant_order_id", str(order.id)
+            )
+        result = confirm_cashfree_payment(order, cashfree_order_id)
 
         return Response(
             {

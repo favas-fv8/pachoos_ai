@@ -20,6 +20,8 @@ from apps.catalog.models import (
     ProductImage,
     ProductTag,
     ProductVariant,
+    Purchase,
+    PurchaseItem,
     StockMovement,
     Subcategory,
     Tag,
@@ -105,14 +107,39 @@ class TestSharedCategoryManagement:
         res = api_admin1.delete(f"/api/v1/catalog/admin/categories/{deleted['id']}/")
         assert res.status_code == 204
 
-    def test_category_delete_blocked_when_has_products(self, api_admin1, db):
+    def test_category_delete_cascades_products_and_subcategories(self, api_admin1, db):
+        """Products with no order/inventory history are removed with the
+        category (same rule as the per-product delete flow)."""
         cat = Category.objects.create(name="Bakery X", slug="bakery-x")
         sub = Subcategory.objects.create(category=cat, name="Cakes", slug="cakes-x")
-        Product.objects.create(subcategory=sub, name="Cake", base_price=Decimal("100"))
+        product = Product.objects.create(
+            subcategory=sub, name="Cake", base_price=Decimal("100")
+        )
+
+        res = api_admin1.delete(f"/api/v1/catalog/admin/categories/{cat.id}/")
+        assert res.status_code == 204
+        assert not Category.objects.filter(id=cat.id).exists()
+        assert not Subcategory.objects.filter(id=sub.id).exists()
+        assert not Product.objects.filter(id=product.id).exists()
+
+    def test_category_delete_blocked_when_products_reference_history(
+        self, api_admin1, db
+    ):
+        """Products referenced by orders/stock history are PROTECTed — the
+        delete is refused up front and nothing is removed."""
+        cat = Category.objects.create(name="Legacy Cat", slug="legacy-cat")
+        sub = Subcategory.objects.create(category=cat, name="Old", slug="old-sub")
+        product = Product.objects.create(
+            subcategory=sub, name="Old Cake", base_price=Decimal("100")
+        )
+        StockMovement.objects.create(product=product, quantity=5, reason="adjustment")
 
         res = api_admin1.delete(f"/api/v1/catalog/admin/categories/{cat.id}/")
         assert res.status_code == 409
+        assert "history" in res.json()["error"]
         assert Category.objects.filter(id=cat.id).exists()
+        assert Subcategory.objects.filter(id=sub.id).exists()
+        assert Product.objects.filter(id=product.id).exists()
 
     def test_category_activate_deactivate(self, api_admin1, api_admin2):
         cat = api_admin1.post("/api/v1/catalog/admin/categories/", {"name": "Seasonal"}).json()
@@ -588,3 +615,165 @@ class TestAdminProductExtendedFields:
         )
         assert res.status_code == 200
         assert res.json()["name"] == "Minimal 2"
+
+    def test_create_works_when_legacy_blank_unique_row_exists(self, api_admin1, db):
+        """Regression: a row stored with blank slug/sku (pre-fix bug) made
+        every subsequent create fail with UNIQUE constraint → 500."""
+        cat = Category.objects.create(name="Legacy Cat", slug="legacy-cat-2")
+        sub = Subcategory.objects.create(category=cat, name="Legacy Sub", slug="legacy-sub-2")
+        Product.objects.create(subcategory=sub, name="Audit Product", base_price=Decimal("10"))
+        assert Product.objects.filter(slug="", sku="").exists()
+
+        res = api_admin1.post(
+            "/api/v1/catalog/admin/products/",
+            {
+                "name": "Fresh After Legacy",
+                "subcategory": sub.id,
+                "base_price": "10",
+                "stock_quantity": 1,
+                "is_available": True,
+                "sku": "",
+            },
+            format="json",
+        )
+        assert res.status_code == 201, res.json()
+        data = res.json()
+        assert data["slug"] == "fresh-after-legacy"
+        assert data["sku"] and data["sku"] != ""
+
+    def test_update_with_blank_sku_does_not_500(self, api_admin1, db):
+        """Regression: PATCHing a product with sku:"" used to write "" to the
+        UNIQUE column (500 when any other blank row existed)."""
+        cat = Category.objects.create(name="Upd Cat", slug="upd-cat")
+        sub = Subcategory.objects.create(category=cat, name="Upd Sub", slug="upd-sub")
+        legacy = Product.objects.create(subcategory=sub, name="Legacy Row", base_price=Decimal("10"))
+
+        res = api_admin1.patch(
+            f"/api/v1/catalog/admin/products/{legacy.id}/",
+            {"sku": "", "base_price": "12"},
+            format="json",
+        )
+        assert res.status_code == 200, res.json()
+        legacy.refresh_from_db()
+        assert legacy.sku != ""
+        assert str(legacy.base_price) == "12.00"
+
+    def test_variant_without_sku_gets_generated_one(self, api_admin1):
+        cat, sub = self._make_category_and_sub(api_admin1)
+        res = api_admin1.post(
+            "/api/v1/catalog/admin/products/",
+            {
+                "name": "Blank Variant SKU",
+                "subcategory": sub["id"],
+                "base_price": "10",
+                "stock_quantity": 1,
+                "is_available": True,
+                "variants": [
+                    {"name": "A", "sku": "", "price": "5", "stock_quantity": 1},
+                    {"name": "B", "sku": "", "price": "6", "stock_quantity": 1},
+                ],
+            },
+            format="json",
+        )
+        assert res.status_code == 201, res.json()
+        skus = [v["sku"] for v in res.json()["variants"]]
+        assert all(skus)
+        assert len(set(skus)) == 2
+
+    def test_variant_price_and_stock_follow_product(self, api_admin1):
+        """The admin-defined product price/stock is the single source of
+        truth — variants share it so /shop matches /admin/products."""
+        cat, sub = self._make_category_and_sub(api_admin1)
+        res = api_admin1.post(
+            "/api/v1/catalog/admin/products/",
+            {
+                "name": "Sync Cake",
+                "subcategory": sub["id"],
+                "base_price": "399",
+                "discount_percent": "10",
+                "stock_quantity": 20,
+                "is_available": True,
+                "variants": [
+                    {"name": "1kg", "sku": "SYNC-1", "price": "749", "stock_quantity": 5},
+                ],
+            },
+            format="json",
+        )
+        assert res.status_code == 201, res.json()
+        variant = res.json()["variants"][0]
+        assert float(variant["price"]) == 399.0
+        assert float(variant["discount_percent"]) == 10.0
+        assert variant["stock_quantity"] == 20
+
+        # Updating the product price updates every variant with it.
+        pid = res.json()["id"]
+        res = api_admin1.patch(
+            f"/api/v1/catalog/admin/products/{pid}/",
+            {"base_price": "500", "discount_percent": "20", "stock_quantity": 30},
+            format="json",
+        )
+        assert res.status_code == 200
+        variant = res.json()["variants"][0]
+        assert float(variant["price"]) == 500.0
+        assert float(variant["discount_percent"]) == 20.0
+        assert variant["stock_quantity"] == 30
+        assert float(res.json()["selling_price"]) == 400.0
+
+
+@pytest.mark.django_db
+class TestPurchaseStockIntake:
+    """Recording a purchase item automatically increases product stock."""
+
+    def _admin_instance(self):
+        from django.contrib.admin import AdminSite
+
+        from apps.catalog.admin import PurchaseItemAdmin
+
+        return PurchaseItemAdmin(PurchaseItem, AdminSite())
+
+    def test_purchase_item_increases_product_stock(self, db, admin_user, shop):
+        from django.test import RequestFactory
+
+        cat = Category.objects.create(name="Intake Cat", slug="intake-cat")
+        sub = Subcategory.objects.create(category=cat, name="Intake Sub", slug="intake-sub")
+        product = Product.objects.create(
+            subcategory=sub, name="Intake Product", base_price=Decimal("50"),
+            stock_quantity=10,
+        )
+        purchase = Purchase.objects.create(shop=shop, supplier="Supplier X")
+        item = PurchaseItem(
+            purchase=purchase, product=product, quantity=5,
+            unit_cost=Decimal("30"), total=Decimal("150"),
+        )
+
+        request = RequestFactory().post("/")
+        request.user = admin_user
+        self._admin_instance().save_model(request, item, None, False)
+
+        product.refresh_from_db()
+        assert product.stock_quantity == 15
+        movement = StockMovement.objects.get(product=product, reason="purchase")
+        assert movement.quantity == 5
+
+    def test_purchase_item_delete_reverses_stock(self, db, admin_user, shop):
+        from django.test import RequestFactory
+
+        cat = Category.objects.create(name="Rev Cat", slug="rev-cat")
+        sub = Subcategory.objects.create(category=cat, name="Rev Sub", slug="rev-sub")
+        product = Product.objects.create(
+            subcategory=sub, name="Rev Product", base_price=Decimal("50"),
+            stock_quantity=10,
+        )
+        purchase = Purchase.objects.create(shop=shop)
+        item = PurchaseItem(
+            purchase=purchase, product=product, quantity=4,
+            unit_cost=Decimal("30"), total=Decimal("120"),
+        )
+        request = RequestFactory().post("/")
+        request.user = admin_user
+        admin_instance = self._admin_instance()
+        admin_instance.save_model(request, item, None, False)
+        admin_instance.delete_model(request, item)
+
+        product.refresh_from_db()
+        assert product.stock_quantity == 10

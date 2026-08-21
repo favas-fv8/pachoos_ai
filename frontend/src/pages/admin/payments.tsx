@@ -4,6 +4,7 @@ import { CreditCard } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { BackButton } from "@/components/ui/back-button"
 import { api } from "@/lib/api/client"
+import { paymentStatusMeta } from "@/lib/payment-status"
 import { Loader } from "./shared"
 
 interface PaymentRecord {
@@ -15,20 +16,6 @@ interface PaymentRecord {
   payment_status: string
   payment_method: string
   created_at: string
-}
-
-const paymentStatus = (orderStatus: string) => {
-  if (orderStatus === "delivered" || orderStatus === "refunded") return { label: "Captured", tone: "success" as const }
-  if (orderStatus === "cancelled") return { label: "Refunded", tone: "danger" as const }
-  if (orderStatus === "pending") return { label: "Awaiting payment", tone: "warning" as const }
-  return { label: "In progress", tone: "secondary" as const }
-}
-
-const PAYMENT_STATUS_COLORS: Record<string, "warning" | "success" | "danger"> = {
-  pending: "warning",
-  paid: "success",
-  failed: "danger",
-  refunded: "warning",
 }
 
 export default function AdminPayments() {
@@ -88,7 +75,7 @@ export default function AdminPayments() {
               </thead>
               <tbody>
                 {records.map((r) => {
-                  const ps = paymentStatus(r.status)
+                  const ps = paymentStatusMeta(r.payment_status, r.status)
                   return (
                     <tr key={r.id} className="border-t border-border">
                       <td className="px-4 py-3 font-medium">{r.order_number}</td>
@@ -98,7 +85,7 @@ export default function AdminPayments() {
                         {r.payment_method ? r.payment_method.replace(/_/g, " ") : "—"}
                       </td>
                       <td className="px-4 py-3">
-                        <Badge variant={PAYMENT_STATUS_COLORS[r.payment_status] ?? "warning"}>
+                        <Badge variant={ps.tone}>
                           {ps.label}
                         </Badge>
                       </td>

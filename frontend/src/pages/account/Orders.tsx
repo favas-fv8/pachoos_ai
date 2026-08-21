@@ -124,6 +124,9 @@ export default function Orders() {
                   {o.payment_method.replace(/_/g, ' ')}
                 </p>
               )}
+              <p className="mt-1 text-xs text-ink-muted">
+                Cashback {formatINR(Number(o.cashback_earned ?? 0))}
+              </p>
             </div>
           </Link>
         ))}

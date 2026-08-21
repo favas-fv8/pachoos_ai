@@ -14,6 +14,7 @@ import {
   XCircle,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { BackButton } from "@/components/ui/back-button"
 import { api, toApiError } from "@/lib/api/client"
 import { formatINR } from "@/lib/utils"
 
@@ -112,9 +113,15 @@ export default function PaymentResultPage() {
     }
   }, [searchParams])
 
+  // Back returns to the previous in-app screen (e.g. the payment page);
+  // when the page was landed on directly (Cashfree redirect), fall back to
+  // the payment retry page for this order, or the orders list.
+  const backTo = orderId ? `/payment/${orderId}` : "/account/orders"
+
   if (state === "verifying") {
     return (
       <div className="container-px mx-auto py-8">
+        <BackButton to={backTo} />
         <div className="flex flex-col items-center justify-center py-20">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
           <p className="mt-4 text-sm text-ink-muted">
@@ -128,6 +135,7 @@ export default function PaymentResultPage() {
   if (state === "no-order") {
     return (
       <div className="container-px mx-auto py-8">
+        <BackButton to={backTo} />
         <motion.div
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
@@ -157,6 +165,7 @@ export default function PaymentResultPage() {
 
   return (
     <div className="container-px mx-auto py-8">
+      <BackButton to={backTo} />
       <motion.div
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}

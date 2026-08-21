@@ -238,14 +238,44 @@ def handle_cashfree_webhook(payload: dict, request_body: bytes, request_headers:
         order_status,
     )
 
-    if not order_id:
-        return {"handled": False, "message": "No order_id in webhook payload"}
+    if not order_id and not cf_order_id:
+        return {"handled": False, "message": "No order_id or cf_order_id in webhook payload"}
 
-    try:
-        order = Order.objects.get(id=order_id)
-    except (Order.DoesNotExist, ValueError, TypeError):
-        logger.warning("Cashfree webhook: Order %s not found", order_id)
-        return {"handled": False, "message": f"Order {order_id} not found"}
+    # ── Resolve the Order from the webhook identifiers ──────────────────
+    from apps.payments.models import Payment
+
+    order = None
+
+    # Method 1: look up via cf_order_id → Payment → Order (most reliable)
+    if cf_order_id:
+        payment_lookup = Payment.objects.filter(
+            razorpay_order_id=cf_order_id, provider="cashfree"
+        ).first()
+        if payment_lookup:
+            order = payment_lookup.order
+
+    # Method 2: order_id is the raw PACHOOS UUID (old / first-attempt format)
+    if order is None and order_id:
+        try:
+            order = Order.objects.get(id=order_id)
+        except (Order.DoesNotExist, ValueError, TypeError):
+            pass
+
+    # Method 3: order_id is "{uuid}-{suffix}" — strip the suffix
+    if order is None and order_id and "-" in order_id:
+        try:
+            original_id = order_id.rsplit("-", 1)[0]
+            order = Order.objects.get(id=original_id)
+        except (Order.DoesNotExist, ValueError, TypeError):
+            pass
+
+    if order is None:
+        logger.warning(
+            "Cashfree webhook: Order not found for cf_order_id=%s order_id=%s",
+            cf_order_id,
+            order_id,
+        )
+        return {"handled": False, "message": "Order not found"}
 
     # If already paid, idempotent — just acknowledge
     if order.payment_status == "paid":

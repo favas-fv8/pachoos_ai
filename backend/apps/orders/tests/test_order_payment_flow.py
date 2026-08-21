@@ -239,6 +239,25 @@ class TestPaymentConfirmation:
             == 1
         )
 
+    def test_variant_sale_updates_product_stock(self, cart, product, variant, user):
+        """Sales of a specific variant must still decrement the product-level
+        stock that /admin/products and /shop display (variants mirror it)."""
+        CartItem.objects.create(
+            cart=cart,
+            product=product,
+            variant=variant,
+            quantity=2,
+            unit_price=Decimal("240.00"),
+        )
+        order = place_order(cart=cart, user=user, delivery_address_id=1)
+        mark_payment_successful(
+            order, method="demo_upi", provider="demo", transaction_id="DEMO-V", is_demo=True
+        )
+        product.refresh_from_db()
+        variant.refresh_from_db()
+        assert product.stock_quantity == 48
+        assert variant.stock_quantity == 48
+
     def test_cashback_credited_once(self, cart_with_item, user):
         order = place_order(cart=cart_with_item, user=user, delivery_address_id=1)
         mark_payment_successful(order, method="demo_upi", provider="demo", is_demo=True)

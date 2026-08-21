@@ -1,4 +1,6 @@
 """Catalog serializers — products, variants, categories, tags."""
+import secrets
+
 from django.db.models import Count, ProtectedError
 from django.utils.text import slugify
 from rest_framework import serializers
@@ -58,7 +60,7 @@ class WishlistSerializer(serializers.ModelSerializer):
         return img.resolved_url if img else None
 
     def get_effective_price(self, obj: Wishlist) -> float:
-        return float(obj.product.effective_price)
+        return float(obj.product.default_effective_price)
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -157,7 +159,9 @@ class AdminTagField(serializers.ListField):
 
 
 class ProductListSerializer(serializers.ModelSerializer):
-    effective_price = serializers.ReadOnlyField()
+    base_price = serializers.SerializerMethodField()
+    effective_price = serializers.SerializerMethodField()
+    discount_percent = serializers.SerializerMethodField()
     avg_rating = serializers.DecimalField(
         max_digits=2, decimal_places=1, coerce_to_string=False
     )
@@ -193,6 +197,22 @@ class ProductListSerializer(serializers.ModelSerializer):
             "is_featured",
             "primary_image",
         ]
+
+    def _pricing_source(self, obj: Product):
+        """The first listed variant when one exists, else the product itself —
+        the same default selection the detail page preselects. Keeps card
+        prices identical to the detail page and to what checkout charges."""
+        return obj.variants.first() or obj
+
+    def get_base_price(self, obj: Product) -> float:
+        src = self._pricing_source(obj)
+        return float(src.price if isinstance(src, ProductVariant) else src.base_price)
+
+    def get_discount_percent(self, obj: Product) -> float:
+        return float(self._pricing_source(obj).discount_percent)
+
+    def get_effective_price(self, obj: Product) -> float:
+        return float(self._pricing_source(obj).effective_price)
 
     def get_primary_image(self, obj: Product) -> str | None:
         img = obj.images.filter(is_primary=True).first() or obj.images.first()
@@ -372,12 +392,29 @@ class AdminProductSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("A product with this SKU already exists.")
         return value
 
+    def validate_pid(self, value):
+        value = (value or "").strip()
+        if not value:
+            return ""
+        qs = Product.objects.filter(pid=value)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError("A product with this PID already exists.")
+        return value
+
     def validate_variants(self, variants):
         skus = [v.get("sku") for v in variants if v.get("sku")]
         dupes = {sku for sku in skus if skus.count(sku) > 1}
         if dupes:
             raise serializers.ValidationError(
                 "Variant SKUs must be unique within the product."
+            )
+        names = [v.get("name") for v in variants if v.get("name")]
+        name_dupes = {n for n in names if names.count(n) > 1}
+        if name_dupes:
+            raise serializers.ValidationError(
+                "Variant names must be unique within the product."
             )
         submitted_ids = [v.get("id") for v in variants if v.get("id")]
         for sku in skus:
@@ -391,32 +428,61 @@ class AdminProductSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         variants_data = validated_data.pop("variants", [])
         tags = validated_data.pop("product_tags", [])
+        # slug/sku/pid are UNIQUE columns without usable defaults — real values
+        # must exist BEFORE the INSERT, otherwise a second product collides on
+        # the empty string (IntegrityError → 500) whenever any earlier row was
+        # stored blank.
+        if not validated_data.get("pid"):
+            validated_data.pop("pid", None)  # let the model default generate one
+        if not validated_data.get("slug"):
+            validated_data["slug"] = self._make_unique_slug(validated_data.get("name", ""))
+        if not validated_data.get("sku"):
+            validated_data["sku"] = self._generate_unique_sku()
         product = Product.objects.create(**validated_data)
-        if not product.sku:
-            product.sku = self._make_unique_sku(product)
-            product.save(update_fields=["sku"])
-        if not product.slug:
-            product.slug = self._make_unique_slug(product)
-            product.save(update_fields=["slug"])
         self._sync_variants(product, variants_data)
         self._sync_tags(product, tags)
+        self._mirror_stock(product)
         return product
 
     def update(self, instance, validated_data):
         variants_data = validated_data.pop("variants", None)
         tags = validated_data.pop("product_tags", None)
+        # Never write a blank UNIQUE value ("" collides with any other blank
+        # row → 500). Blank means "keep the current value / auto-generate".
+        for field in ("sku", "pid"):
+            if field in validated_data and not validated_data[field]:
+                del validated_data[field]
         instance = super().update(instance, validated_data)
+        # Price/discount edits propagate to every variant so /shop, product
+        # details and checkout always charge the admin-defined price.
+        if "base_price" in validated_data or "discount_percent" in validated_data:
+            instance.variants.update(
+                price=instance.base_price,
+                discount_percent=instance.discount_percent,
+            )
+        # Repair legacy rows that were stored with blank UNIQUE values.
         if not instance.sku:
             instance.sku = self._make_unique_sku(instance)
             instance.save(update_fields=["sku"])
         if not instance.slug:
-            instance.slug = self._make_unique_slug(instance)
+            instance.slug = self._make_unique_slug(
+                instance.name, exclude_pk=instance.pk
+            )
             instance.save(update_fields=["slug"])
         if variants_data is not None:
             self._sync_variants(instance, variants_data)
         if tags is not None:
             self._sync_tags(instance, tags)
+        self._mirror_stock(instance)
         return instance
+
+    @staticmethod
+    def _mirror_stock(product: Product) -> None:
+        """Keep every variant's stock aligned with the product-level count the
+        admin manages, so /shop and /admin/products can never drift apart."""
+        product.variants.exclude(stock_quantity=product.stock_quantity).update(
+            stock_quantity=product.stock_quantity
+        )
 
     @staticmethod
     def _make_unique_sku(product: Product) -> str:
@@ -429,11 +495,29 @@ class AdminProductSerializer(serializers.ModelSerializer):
         return sku
 
     @staticmethod
-    def _make_unique_slug(product: Product) -> str:
-        base = slugify(product.name) or f"product-{product.pk}"
+    def _generate_unique_sku() -> str:
+        """PK-independent unique SKU, usable before the product row exists."""
+        while True:
+            candidate = f"SKU-{secrets.token_hex(4).upper()}"
+            if not Product.objects.filter(sku=candidate).exists():
+                return candidate
+
+    @staticmethod
+    def _generate_variant_sku(product: Product) -> str:
+        while True:
+            candidate = f"VAR-{product.pk}-{secrets.token_hex(2).upper()}"
+            if not ProductVariant.objects.filter(sku=candidate).exists():
+                return candidate
+
+    @staticmethod
+    def _make_unique_slug(name: str, exclude_pk=None) -> str:
+        base = slugify(name) or "product"
         slug = base
         n = 1
-        while Product.objects.filter(slug=slug).exists():
+        qs = Product.objects.all()
+        if exclude_pk is not None:
+            qs = qs.exclude(pk=exclude_pk)
+        while qs.filter(slug=slug).exists():
             n += 1
             slug = f"{base}-{n}"
         return slug
@@ -453,19 +537,48 @@ class AdminProductSerializer(serializers.ModelSerializer):
 
     @classmethod
     def _sync_variants(cls, product: Product, variants_data):
+        from django.db import IntegrityError
+
         submitted_ids = set()
         for data in variants_data:
             data = dict(data)
             variant_id = data.pop("id", None)
+            # The admin-defined product price/stock is the single source of
+            # truth. Variants are size/weight options and share it, so the
+            # shop card, detail page and checkout always show/charge exactly
+            # what the admin set in /admin/products.
+            data["price"] = product.base_price
+            data["discount_percent"] = product.discount_percent
+            data["stock_quantity"] = product.stock_quantity
+            # Variant sku is UNIQUE — never write "" (collides with any other
+            # blank variant row); barcode is UNIQUE too and NULL is allowed.
+            if not data.get("sku"):
+                data["sku"] = cls._generate_variant_sku(product)
+            if data.get("barcode") == "":
+                data["barcode"] = None
+            variant = None
             if variant_id:
                 variant = product.variants.filter(pk=variant_id).first()
+            if variant is None and data.get("name"):
+                # Row submitted without a usable id: match the product's
+                # existing variant by name (unique per product) so re-submitting
+                # the form's rows updates them instead of violating the
+                # (product, name) unique constraint → 500.
+                variant = product.variants.filter(name=data["name"]).first()
+                if variant and variant.id in submitted_ids:
+                    variant = None
+            try:
                 if variant:
                     for field, value in data.items():
                         setattr(variant, field, value)
                     variant.save()
-                    submitted_ids.add(variant_id)
+                    submitted_ids.add(variant.id)
                     continue
-            created = ProductVariant.objects.create(product=product, **data)
+                created = ProductVariant.objects.create(product=product, **data)
+            except IntegrityError:
+                raise serializers.ValidationError(
+                    "A variant with this name or SKU already exists for this product."
+                ) from None
             submitted_ids.add(created.id)
         for variant in product.variants.all():
             if variant.id not in submitted_ids:

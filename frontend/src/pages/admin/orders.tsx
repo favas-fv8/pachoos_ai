@@ -6,8 +6,12 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { BackButton } from "@/components/ui/back-button"
 import { api, toApiError } from "@/lib/api/client"
+import { paymentStatusMeta } from "@/lib/payment-status"
 import { Loader, StatusBadge } from "./shared"
 import { STATUS_OPTIONS } from "./constants"
+
+// The admin orders list shows only the latest 15 orders.
+const MAX_ORDERS = 15
 
 interface Order {
   id: string
@@ -23,13 +27,6 @@ interface Order {
   cancellation_reason: string
 }
 
-const PAYMENT_STATUS_COLORS: Record<string, "warning" | "success" | "danger"> = {
-  pending: "warning",
-  paid: "success",
-  failed: "danger",
-  refunded: "warning",
-}
-
 export default function AdminOrders() {
   const [orders, setOrders] = useState<Order[]>([])
   const [loading, setLoading] = useState(true)
@@ -42,8 +39,9 @@ export default function AdminOrders() {
     setLoading(true)
     setError("")
     try {
-      const params = statusFilter ? `?status=${statusFilter}` : ""
-      const res = await api.get(`/api/v1/admin-dashboard/all-orders/${params}`)
+      const params = new URLSearchParams({ limit: String(MAX_ORDERS) })
+      if (statusFilter) params.set("status", statusFilter)
+      const res = await api.get(`/api/v1/admin-dashboard/all-orders/?${params.toString()}`)
       setOrders(res.data)
     } catch {
       setError("Failed to load orders.")
@@ -79,7 +77,7 @@ export default function AdminOrders() {
       <BackButton to="/admin/dashboard" homeTo="/admin/dashboard" storeTo="/shop" />
       <div>
         <h1 className="font-display text-2xl font-bold">Orders</h1>
-        <p className="text-sm text-ink-muted">Review and manage all customer orders.</p>
+        <p className="text-sm text-ink-muted">Review and manage the latest {MAX_ORDERS} customer orders.</p>
       </div>
 
       {error && (
@@ -140,9 +138,10 @@ export default function AdminOrders() {
                   </td>
                   <td className="px-4 py-3">
                     <div className="space-y-1">
-                      <Badge variant={PAYMENT_STATUS_COLORS[o.payment_status] ?? "warning"}>
-                        {o.payment_status}
-                      </Badge>
+                      {(() => {
+                        const ps = paymentStatusMeta(o.payment_status, o.status)
+                        return <Badge variant={ps.tone}>{ps.label}</Badge>
+                      })()}
                       {o.payment_method && (
                         <p className="text-xs capitalize text-ink-muted">
                           {o.payment_method.replace(/_/g, " ")}

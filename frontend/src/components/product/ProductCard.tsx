@@ -34,10 +34,12 @@ export function ProductCard({ product }: ProductCardProps) {
   const ratingLabel = formatRating(product.avg_rating, product.rating_count)
   const hasRating = ratingLabel !== "No ratings"
   const wishlisted = isWishlisted(product.id)
+  // Availability follows the live stock count managed in /admin/products.
+  const inStock = product.is_available && product.stock_quantity > 0
 
   const handleAddToCart = async (e: React.MouseEvent) => {
     e.stopPropagation()
-    if (cartStatus !== "idle" || !product.is_available) return
+    if (cartStatus !== "idle" || !inStock) return
 
     if (!isAuthenticated) {
       dispatch(pushToast({ message: "Please sign in to continue.", variant: "error" }))
@@ -113,7 +115,7 @@ export function ProductCard({ product }: ProductCardProps) {
             -{product.discount_percent}%
           </Badge>
         )}
-        {!product.is_available && (
+        {!inStock && (
           <div className="absolute inset-0 flex items-center justify-center bg-ink/50">
             <Badge variant="muted">Out of stock</Badge>
           </div>
@@ -163,7 +165,7 @@ export function ProductCard({ product }: ProductCardProps) {
           variant="default"
           size="sm"
           className="mt-3 w-full"
-          disabled={!product.is_available || cartStatus !== "idle"}
+          disabled={!inStock || cartStatus !== "idle"}
           onClick={handleAddToCart}
         >
           {cartStatus === "adding" ? (
@@ -171,7 +173,7 @@ export function ProductCard({ product }: ProductCardProps) {
           ) : (
             <ShoppingCart className="mr-2 h-4 w-4" />
           )}
-          {product.is_available ? "Add to cart" : "Unavailable"}
+          {inStock ? "Add to cart" : "Unavailable"}
         </Button>
       </div>
     </motion.div>

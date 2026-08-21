@@ -2,10 +2,29 @@
 from datetime import timedelta
 from decimal import Decimal
 
-from django.db.models import Avg, Count, F, Sum
+from django.db.models import Avg, Count, F, Q, Sum
 from django.utils import timezone
 
 from apps.admin_dashboard.activity import record_admin_activity
+
+
+def get_customer_order_stats(user) -> dict:
+    """Live order stats for a customer, from their actual order data.
+
+    Shared by the customer list and detail endpoints so both always agree:
+    ``order_count`` counts every order placed; ``total_spent`` sums the
+    grand totals of orders actually paid.
+    """
+    from apps.orders.models import Order
+
+    stats = Order.objects.filter(user=user).aggregate(
+        order_count=Count("id"),
+        total_spent=Sum("grand_total", filter=Q(payment_status="paid")),
+    )
+    return {
+        "order_count": stats["order_count"] or 0,
+        "total_spent": str(stats["total_spent"] or Decimal("0.00")),
+    }
 
 
 def get_dashboard_stats(shop=None) -> dict:
@@ -180,12 +199,17 @@ def get_recent_orders(shop=None, limit: int = 20) -> list:
 
 def get_customer_list(shop=None, limit: int = 50) -> list:
     """Get customer list with stats. Deleted (soft-deactivated) customers are
-    hidden from the list; every financial record stays intact in the database."""
+    hidden from the list; every financial record stays intact in the database.
+
+    Uses the same stat definitions as :func:`get_customer_order_stats` so the
+    list and the detail card always agree."""
     from apps.accounts.models import User
 
     customers = User.objects.filter(is_staff=False, is_active=True).annotate(
         order_count=Count("orders"),
-        total_spent=Sum("orders__grand_total"),
+        total_spent=Sum(
+            "orders__grand_total", filter=Q(orders__payment_status="paid")
+        ),
     ).order_by("-total_spent")[:limit]
 
     return [
@@ -195,7 +219,7 @@ def get_customer_list(shop=None, limit: int = 50) -> list:
             "phone": c.phone or "",
             "email": c.email or "",
             "order_count": c.order_count,
-            "total_spent": str(c.total_spent or 0),
+            "total_spent": str(c.total_spent or Decimal("0.00")),
             "date_joined": c.created_at.isoformat(),
         }
         for c in customers
@@ -221,6 +245,8 @@ def get_customer_detail(customer_id: int) -> dict:
     book = DebtBook.objects.filter(user=user).order_by("created_at").first()
     debt_book = DebtBookDetailSerializer(book).data if book else None
 
+    order_stats = get_customer_order_stats(user)
+
     return {
         "id": user.id,
         "full_name": user.full_name,
@@ -230,6 +256,8 @@ def get_customer_detail(customer_id: int) -> dict:
         "is_active": user.is_active,
         "date_joined": user.created_at.isoformat(),
         "last_login": user.last_login_at.isoformat() if user.last_login_at else None,
+        "order_count": order_stats["order_count"],
+        "total_spent": order_stats["total_spent"],
         "total_debt": debt_book["summary"]["outstanding"] if debt_book else "0.00",
         "debt_book_id": str(book.id) if book else None,
         "debt_book": debt_book,

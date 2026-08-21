@@ -18,6 +18,7 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { BackButton } from "@/components/ui/back-button"
 import { api, toApiError } from "@/lib/api/client"
 import { formatINR } from "@/lib/utils"
 import type { PaymentMethod } from "@/types"
@@ -166,8 +167,8 @@ export default function PaymentPage() {
         .then((result: any) => {
           if (result?.error) {
             setError(result.error.message || "Payment checkout failed. Please try again.")
-            setCashfreeLoading(false)
           }
+          setCashfreeLoading(false)
         })
         .catch(() => {
           setError("Failed to initialize Cashfree checkout. Please try again.")
@@ -182,6 +183,7 @@ export default function PaymentPage() {
   if (state === "loading") {
     return (
       <div className="container-px mx-auto py-8">
+        <BackButton to={orderId ? `/track/${orderId}` : "/account/orders"} />
         <div className="flex justify-center py-20">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
         </div>
@@ -191,6 +193,7 @@ export default function PaymentPage() {
 
   return (
     <div className="container-px mx-auto py-8">
+      <BackButton to={orderId ? `/track/${orderId}` : "/account/orders"} />
       <motion.div
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
@@ -334,10 +337,6 @@ export default function PaymentPage() {
                   })}
                 </div>
 
-                {error && (
-                  <div className="mt-4 rounded-xl bg-danger-muted p-3 text-sm text-danger">{error}</div>
-                )}
-
                 <div className="mt-4 flex items-center justify-between gap-4">
                   <Button variant="outline" onClick={() => navigate(-1)} disabled={submitting}>
                     Back
@@ -372,6 +371,10 @@ export default function PaymentPage() {
                 </div>
               </details>
             </div>
+
+            {error && (
+              <div className="mt-4 rounded-xl bg-danger-muted p-3 text-sm text-danger">{error}</div>
+            )}
           </div>
         )}
       </motion.div>

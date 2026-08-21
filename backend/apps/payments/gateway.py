@@ -12,6 +12,7 @@ To connect a real gateway later (Razorpay / UPI / cards):
      ``mark_payment_successful`` / ``mark_payment_failed`` confirmers.
 """
 import secrets
+import uuid
 from abc import ABC, abstractmethod
 
 
@@ -122,11 +123,16 @@ class CashfreeGateway(PaymentGateway):
     def create_order(self, order, customer_email: str = "", customer_phone: str = "") -> dict:
         """Create a Cashfree order and return the payment session ID.
 
+        Each call generates a unique ``order_id`` so that retries after
+        FAILED / USER_DROPPED payments receive a fresh ``payment_session_id``
+        instead of reusing the stale session from the previous attempt.
+
         Returns::
 
             {
                 "success": True,
-                "cf_order_id": str,
+                "cf_order_id": str,          # Cashfree's internal order ID
+                "order_id": str,             # The unique merchant order ID we sent
                 "payment_session_id": str,
                 "order_status": str,
             }
@@ -136,9 +142,11 @@ class CashfreeGateway(PaymentGateway):
         import requests
         from django.conf import settings
 
+        cashfree_order_id = f"{order.id}-{uuid.uuid4().hex[:8]}"
+
         url = f"{self._base_url()}/orders"
         payload = {
-            "order_id": str(order.id),
+            "order_id": cashfree_order_id,
             "order_amount": float(order.grand_total),
             "order_currency": "INR",
             "customer_details": {
@@ -169,6 +177,7 @@ class CashfreeGateway(PaymentGateway):
         return {
             "success": True,
             "cf_order_id": data.get("cf_order_id", ""),
+            "order_id": cashfree_order_id,
             "payment_session_id": data.get("payment_session_id", ""),
             "order_status": data.get("order_status", ""),
         }
@@ -240,7 +249,9 @@ class CashfreeGateway(PaymentGateway):
                     # Take the latest payment (last in the list)
                     latest_payment = payments_data[-1]
                     payment_status = latest_payment.get("payment_status", "")
-                    payment_method = latest_payment.get("payment_method", "")
+                    payment_method = normalize_payment_method(
+                        latest_payment.get("payment_method", "")
+                    )
                     transaction_id = latest_payment.get("cf_payment_id", "")
             else:
                 # Payments endpoint may return 404 if no payment attempt yet
@@ -268,6 +279,42 @@ _GATEWAYS = {
     "razorpay": RazorpayGateway,
     "cashfree": CashfreeGateway,
 }
+
+
+KNOWN_PAYMENT_METHODS = {
+    "upi",
+    "card",
+    "netbanking",
+    "wallet",
+    "emi",
+    "cod",
+    "demo_upi",
+    "demo_card",
+    "demo_gpay",
+    "demo_phonepe",
+    "demo_paytm",
+}
+
+
+def normalize_payment_method(value) -> str:
+    """Return a clean, human-readable payment-method token.
+
+    Cashfree PG v2 reports ``payment_method`` as an object keyed by method
+    (e.g. ``{"app": {...}}`` or ``{"upi": {...}}``). Storing that in a
+    CharField persists its Python repr ("{'app': ...}"), which then leaks
+    into order displays. Normalize dicts/lists/legacy repr strings to a
+    simple lowercase token; unrecognizable payloads become "online".
+    """
+    if isinstance(value, dict):
+        value = next(iter(value), "")
+    elif isinstance(value, (list, tuple)):
+        value = normalize_payment_method(value[0]) if value else ""
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    if "{" in text or "[" in text or "'" in text or '"' in text:
+        return "online"
+    return text
 
 
 def get_gateway(provider: str = "demo") -> PaymentGateway:

@@ -13,7 +13,7 @@ from apps.wallet.views import (
     DebtAdjustView,
     DebtBookNotesView,
     DebtHistoryView,
-    MintVoucherView,
+    RedeemCashbackView,
     RedeemVoucherView,
     VoucherListView,
     WalletBalanceView,
@@ -23,9 +23,9 @@ from apps.wallet.views import (
 urlpatterns = [
     path("balance/", WalletBalanceView.as_view(), name="wallet-balance"),
     path("history/", WalletHistoryView.as_view(), name="wallet-history"),
+    path("cashback/redeem/", RedeemCashbackView.as_view(), name="cashback-redeem"),
     path("vouchers/", VoucherListView.as_view(), name="voucher-list"),
     path("vouchers/redeem/", RedeemVoucherView.as_view(), name="voucher-redeem"),
-    path("vouchers/mint/", MintVoucherView.as_view(), name="voucher-mint"),
     # Admin Debt Book
     path("debt/books/", AdminDebtBookListCreateView.as_view(), name="debt-book-list"),
     path("debt/books/<uuid:book_id>/", AdminDebtBookDetailView.as_view(), name="debt-book-detail"),

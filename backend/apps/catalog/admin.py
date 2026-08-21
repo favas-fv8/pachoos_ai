@@ -79,5 +79,46 @@ class PurchaseAdmin(admin.ModelAdmin):
 
 @admin.register(PurchaseItem)
 class PurchaseItemAdmin(admin.ModelAdmin):
+    """Purchase intake — saving a purchase item automatically increases the
+    product's stock (and mirrors variants), keeping /shop in sync."""
     list_display = ("id", "purchase", "product", "quantity", "unit_cost", "total")
     list_filter = ("purchase", "product")
+
+    def save_model(self, request, obj, form, change):
+        old_qty = obj.quantity if change else 0
+        if change:
+            old_qty = PurchaseItem.objects.get(pk=obj.pk).quantity
+        super().save_model(request, obj, form, change)
+
+        delta = obj.quantity - old_qty
+        if delta:
+            product = obj.product
+            product.stock_quantity += delta
+            product.save(update_fields=["stock_quantity"])
+            product.variants.update(stock_quantity=product.stock_quantity)
+            StockMovement.objects.create(
+                product=product,
+                variant=obj.variant,
+                quantity=delta,
+                reason="purchase" if delta > 0 else "adjustment",
+                ref_purchase_id=obj.purchase_id,
+                note=f"Purchase {obj.purchase.invoice_ref or obj.purchase_id}".strip(),
+                created_by=request.user,
+            )
+
+    def delete_model(self, request, obj):
+        product = obj.product
+        quantity = obj.quantity
+        purchase_id = obj.purchase_id
+        super().delete_model(request, obj)
+        product.stock_quantity -= quantity
+        product.save(update_fields=["stock_quantity"])
+        product.variants.update(stock_quantity=product.stock_quantity)
+        StockMovement.objects.create(
+            product=product,
+            quantity=-quantity,
+            reason="adjustment",
+            ref_purchase_id=purchase_id,
+            note="Purchase item removed",
+            created_by=request.user,
+        )

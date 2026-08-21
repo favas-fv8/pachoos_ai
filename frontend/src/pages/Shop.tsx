@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input"
 import { ProductCard } from "@/components/product/ProductCard"
 import { BackButton } from "@/components/ui/back-button"
 import { api } from "@/lib/api/client"
+import { usePolling } from "@/hooks/usePolling"
 import type { Product } from "@/types"
 
 const SORT_OPTIONS = [
@@ -27,8 +28,8 @@ export default function Shop() {
   const [availableOnly, setAvailableOnly] = useState(false)
   const [total, setTotal] = useState(0)
 
-  const fetchProducts = async () => {
-    setLoading(true)
+  const fetchProducts = async (silent = false) => {
+    if (!silent) setLoading(true)
     try {
       const params = new URLSearchParams()
       if (query) params.set("q", query)
@@ -42,16 +43,20 @@ export default function Shop() {
       setTotal(res.data.count)
     } catch {
       // fallback to empty — real data arrives when backend is live
-      setProducts([])
+      if (!silent) setProducts([])
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }
 
   useEffect(() => {
-    const debounce = setTimeout(fetchProducts, 300)
+    const debounce = setTimeout(() => void fetchProducts(), 300)
     return () => clearTimeout(debounce)
   }, [query, sortBy, category, freshness, availableOnly])
+
+  // Silent refresh so admin price/stock changes reach the shop without any
+  // user interaction.
+  usePolling(() => void fetchProducts(true), 15000)
 
   return (
     <div className="container-px mx-auto py-8">

@@ -347,11 +347,6 @@ def mark_payment_successful(
 
     _apply_paid_order_state(order, payment)
 
-    # Async voucher minting (eager in dev mode).
-    from apps.wallet.tasks import mint_voucher_for_user
-
-    mint_voucher_for_user.delay(order.user.id, order.shop_id)
-
     return payment
 
 
@@ -393,15 +388,18 @@ def _deduct_stock_for_order(order: Order) -> None:
         return
 
     for item in order.items.select_related("product", "variant"):
-        variant = item.variant if item.variant_id else item.product
-        if variant.stock_quantity < item.quantity:
+        product = item.product
+        if product.stock_quantity < item.quantity:
             # Never allow negative stock — surface so the caller can react.
             raise ValueError(
                 f"Insufficient stock for {item.product_name} "
-                f"({item.quantity} requested, {variant.stock_quantity} available)."
+                f"({item.quantity} requested, {product.stock_quantity} available)."
             )
-        variant.stock_quantity -= item.quantity
-        variant.save(update_fields=["stock_quantity"])
+        product.stock_quantity -= item.quantity
+        product.save(update_fields=["stock_quantity"])
+        # Variants mirror the product-level count the admin manages, so
+        # /shop and /admin/products stay synchronized after every sale.
+        product.variants.update(stock_quantity=product.stock_quantity)
 
         StockMovement.objects.create(
             product=item.product,

@@ -131,6 +131,15 @@ class Product(TimeStampedModel):
         discount = float(self.discount_percent) / 100
         return float(self.base_price) * (1 - discount)
 
+    @property
+    def default_effective_price(self) -> float:
+        """The price a customer pays by default: the first listed variant's
+        effective price when variants exist (the detail page preselects that
+        variant), else the product-level effective price. Single source of
+        truth for card/list displays so every surface matches checkout."""
+        first_variant = self.variants.first()
+        return first_variant.effective_price if first_variant else self.effective_price
+
 
 class ProductVariant(TimeStampedModel):
     product = models.ForeignKey(

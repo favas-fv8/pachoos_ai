@@ -21,6 +21,7 @@ class WalletLedger(UUIDPrimaryKeyModel, TimeStampedModel):
         choices=[
             ("purchase_cashback", "Purchase cashback"),
             ("voucher_mint", "Voucher mint"),
+            ("cashback_redeemed", "Cashback redeemed"),
             ("adjustment", "Adjustment"),
         ],
         default="purchase_cashback",

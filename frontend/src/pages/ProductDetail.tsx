@@ -115,7 +115,8 @@ export default function ProductDetail() {
 
   const variant = product?.variants?.find((v) => v.id === selectedVariantId) ?? null
   const price = variant?.effective_price ?? product?.effective_price ?? 0
-  const basePrice = product?.base_price ?? 0
+  const basePrice = variant?.price ?? product?.base_price ?? 0
+  const discountPercent = variant?.discount_percent ?? product?.discount_percent ?? 0
   const stock = variant?.stock_quantity ?? product?.stock_quantity ?? 0
   const unit = product?.stock_unit ?? "count"
   const outOfStock = !product || !product.is_available || stock <= 0
@@ -338,12 +339,12 @@ export default function ProductDetail() {
           <div className="flex flex-wrap items-baseline gap-3">
             <span className="text-3xl font-bold">{formatINR(price)}</span>
             <span className="text-sm text-ink-muted">{unitLabel}</span>
-            {product.discount_percent > 0 && (
+            {discountPercent > 0 && (
               <>
                 <span className="text-lg text-ink-muted line-through">
                   {formatINR(basePrice)}
                 </span>
-                <Badge variant="danger">-{product.discount_percent}% off</Badge>
+                <Badge variant="danger">-{discountPercent}% off</Badge>
               </>
             )}
           </div>

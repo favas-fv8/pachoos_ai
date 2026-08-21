@@ -258,6 +258,7 @@ export interface OrderListItem {
   payment_status: PaymentStatus
   payment_status_display: string
   payment_method: PaymentMethod | ''
+  cashback_earned: string
   grand_total: string
   subtotal: string
   discount_total: string

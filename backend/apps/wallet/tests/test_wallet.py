@@ -1,4 +1,4 @@
-"""Tests for wallet app — cashback, voucher minting, redemption."""
+"""Tests for wallet app — cashback, manual redemption, voucher usage."""
 from decimal import Decimal
 
 import pytest
@@ -9,8 +9,9 @@ from apps.wallet.services import (
     adjust_debt,
     credit_cashback,
     get_debt_balance,
+    get_total_cashback_redeemed,
     get_wallet_balance,
-    mint_voucher,
+    redeem_cashback,
     redeem_voucher,
 )
 
@@ -75,38 +76,70 @@ class TestCashback:
         balance = get_wallet_balance(user, shop)
         assert balance == Decimal("2.25")
 
+    def test_credit_cashback_never_auto_redeems(self, order, shop, user):
+        """Reaching ₹10 via cashback credit must not deduct or mark redeemed."""
+        order.grand_total = Decimal("1500.00")
+        credit_cashback(order)
+        assert get_wallet_balance(user, shop) == Decimal("15.00")
+        assert get_total_cashback_redeemed(user, shop) == Decimal("0.00")
+        assert not WalletLedger.objects.filter(
+            user=user, reason__in=["cashback_redeemed", "voucher_mint"]
+        ).exists()
+
 
 @pytest.mark.django_db
-class TestVoucherMinting:
-    def test_insufficient_balance(self, user, shop):
-        voucher = mint_voucher(user, shop)
-        assert voucher is None
-
-    def test_mint_voucher(self, user, shop):
+class TestCashbackRedemption:
+    def _credit(self, user, shop, amount):
         WalletLedger.objects.create(
             user=user,
             shop=shop,
-            delta=Decimal("10.00"),
-            balance_after=Decimal("10.00"),
+            delta=amount,
+            balance_after=amount,
             reason="purchase_cashback",
         )
-        voucher = mint_voucher(user, shop)
-        assert voucher is not None
-        assert voucher.code.startswith("PCH-")
-        assert voucher.amount == Decimal("10.00")
-        assert voucher.status == "active"
 
-    def test_mint_debits_balance(self, user, shop):
+    def test_below_minimum_rejected(self, user, shop):
+        self._credit(user, shop, Decimal("9.99"))
+        with pytest.raises(ValueError, match="at least"):
+            redeem_cashback(user, shop)
+
+    def test_full_redemption(self, user, shop):
+        self._credit(user, shop, Decimal("25.50"))
+        entry = redeem_cashback(user, shop)
+        assert entry.delta == Decimal("-25.50")
+        assert entry.reason == "cashback_redeemed"
+        assert get_wallet_balance(user, shop) == Decimal("0.00")
+        assert get_total_cashback_redeemed(user, shop) == Decimal("25.50")
+
+    def test_custom_amount_redemption(self, user, shop):
+        self._credit(user, shop, Decimal("40.00"))
+        redeem_cashback(user, shop, amount=Decimal("12.00"))
+        assert get_wallet_balance(user, shop) == Decimal("28.00")
+        assert get_total_cashback_redeemed(user, shop) == Decimal("12.00")
+
+    def test_custom_amount_below_minimum_rejected(self, user, shop):
+        self._credit(user, shop, Decimal("40.00"))
+        with pytest.raises(ValueError, match="Minimum redemption"):
+            redeem_cashback(user, shop, amount=Decimal("5.00"))
+
+    def test_custom_amount_above_balance_rejected(self, user, shop):
+        self._credit(user, shop, Decimal("40.00"))
+        with pytest.raises(ValueError, match="exceeds"):
+            redeem_cashback(user, shop, amount=Decimal("50.00"))
+
+    def test_cumulative_redeemed_includes_legacy_mints(self, user, shop):
+        """Legacy voucher_mint rows count toward Cashback Redeemed."""
+        self._credit(user, shop, Decimal("30.00"))
         WalletLedger.objects.create(
             user=user,
             shop=shop,
-            delta=Decimal("15.00"),
-            balance_after=Decimal("15.00"),
-            reason="purchase_cashback",
+            delta=Decimal("-10.00"),
+            balance_after=Decimal("20.00"),
+            reason="voucher_mint",
+            note="Minted voucher PCH-LEGACY",
         )
-        mint_voucher(user, shop)
-        balance = get_wallet_balance(user, shop)
-        assert balance == Decimal("5.00")
+        redeem_cashback(user, shop, amount=Decimal("10.00"))
+        assert get_total_cashback_redeemed(user, shop) == Decimal("20.00")
 
 
 @pytest.mark.django_db

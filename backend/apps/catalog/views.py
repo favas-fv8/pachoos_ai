@@ -7,6 +7,7 @@ the other admin as a notification (single source of truth = the database).
 from io import BytesIO
 
 from django.conf import settings
+from django.db import transaction
 from django.db.models import Max, ProtectedError
 from django.shortcuts import get_object_or_404
 from django.utils.text import slugify
@@ -247,6 +248,8 @@ class ProductAdminViewSet(viewsets.ModelViewSet):
         product = self.get_object()
 
         if before["stock_quantity"] != product.stock_quantity:
+            # Variants mirror the product-level count the admin manages.
+            product.variants.update(stock_quantity=product.stock_quantity)
             StockMovement.objects.create(
                 product=product,
                 quantity=product.stock_quantity - before["stock_quantity"],
@@ -327,6 +330,8 @@ class ProductAdminViewSet(viewsets.ModelViewSet):
 
         product.stock_quantity = new_qty
         product.save(update_fields=["stock_quantity", "updated_at"])
+        # Variants mirror the product-level count the admin manages.
+        product.variants.update(stock_quantity=new_qty)
 
         StockMovement.objects.create(
             product=product,
@@ -488,24 +493,59 @@ class CategoryAdminViewSet(viewsets.ModelViewSet):
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
         category_id = instance.id
-        has_products = (
-            Subcategory.objects.filter(category=instance)
-            .filter(products__isnull=False)
-            .exists()
+        name = instance.name
+
+        products = list(
+            Product.objects.filter(subcategory__category=instance)
         )
-        if has_products:
+
+        # Same rule as single-product deletion: products referenced by
+        # orders/inventory history are PROTECTed and can never be hard-deleted,
+        # so the whole category delete is refused up front (nothing is removed).
+        blocked = [
+            p for p in products
+            if p.order_items.exists()
+            or p.stock_movements.exists()
+            or p.purchase_items.exists()
+        ]
+        if blocked:
+            listed = ", ".join(p.name for p in blocked[:5])
+            more = f" and {len(blocked) - 5} more" if len(blocked) > 5 else ""
             return Response(
-                {"error": "Category contains products. Deactivate it instead."},
+                {
+                    "error": (
+                        "Category contains products referenced by orders/"
+                        f"inventory history ({listed}{more}). "
+                        "Deactivate it instead."
+                    )
+                },
                 status=409,
             )
-        name = instance.name
+
         try:
-            instance.delete()
+            with transaction.atomic():
+                # Remove the category's products first (Product.subcategory is
+                # PROTECT), mirroring the per-product delete flow + audit trail.
+                for product in products:
+                    snapshot = _product_snapshot(product)
+                    product.delete()
+                    record_admin_activity(
+                        actor=request.user,
+                        action="product_deleted",
+                        entity_type="product",
+                        entity_id=snapshot["pid"],
+                        description=f"Product deleted: {snapshot['name']}",
+                        before=snapshot,
+                        request=request,
+                    )
+                # Cascades away its now-empty subcategories.
+                instance.delete()
         except ProtectedError:
             return Response(
                 {"error": "Category is in use and cannot be deleted. Deactivate it instead."},
                 status=409,
             )
+
         record_admin_activity(
             actor=request.user,
             action="category_deleted",

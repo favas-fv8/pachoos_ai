@@ -249,6 +249,9 @@ export function VariantEditor({
           <Plus className="mr-1 h-4 w-4" /> Add variant
         </Button>
       </div>
+      <p className="mb-2 text-xs text-ink-muted">
+        Variants share the product's price and stock set above.
+      </p>
       {variants.length === 0 ? (
         <p className="rounded-xl border border-dashed border-border bg-surface-muted px-3 py-3 text-sm text-ink-muted">
           No variants. The product sells as a single unit.
@@ -269,7 +272,7 @@ export function VariantEditor({
                   <Trash2 className="h-4 w-4 text-danger" />
                 </Button>
               </div>
-              <div className="grid gap-2 sm:grid-cols-5">
+              <div className="grid gap-2 sm:col-span-2 sm:grid-cols-3">
                 <label className="block">
                   <span className="mb-1 block text-xs text-ink-muted">Name</span>
                   <Input
@@ -284,24 +287,6 @@ export function VariantEditor({
                     placeholder="SKU"
                     value={v.sku}
                     onChange={(e) => update(i, { sku: e.target.value })}
-                  />
-                </label>
-                <label className="block">
-                  <span className="mb-1 block text-xs text-ink-muted">Price (₹)</span>
-                  <Input
-                    type="number"
-                    placeholder="0.00"
-                    value={v.price}
-                    onChange={(e) => update(i, { price: Number(e.target.value) })}
-                  />
-                </label>
-                <label className="block">
-                  <span className="mb-1 block text-xs text-ink-muted">Stock</span>
-                  <Input
-                    type="number"
-                    placeholder="0"
-                    value={v.stock_quantity}
-                    onChange={(e) => update(i, { stock_quantity: Number(e.target.value) })}
                   />
                 </label>
                 <label className="flex items-end gap-2 pb-2 text-sm text-ink-muted">
@@ -485,9 +470,6 @@ export function ProductForm({
           id: v.id ?? undefined,
           name: v.name,
           sku: v.sku,
-          price: v.price,
-          discount_percent: v.discount_percent,
-          stock_quantity: v.stock_quantity,
           is_active: v.is_active,
         })),
       }

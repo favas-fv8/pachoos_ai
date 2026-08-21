@@ -5,20 +5,15 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { BackButton } from '@/components/ui/back-button'
 import { fetchListAll, toApiError } from '@/lib/api/client'
+import { paymentStatusMeta } from '@/lib/payment-status'
 
 interface PaymentRecord {
   id: string
   order_number: string
   grand_total: string
   status: string
+  payment_status: string
   created_at: string
-}
-
-const paymentStatus = (orderStatus: string) => {
-  if (orderStatus === 'delivered' || orderStatus === 'refunded') return { label: 'Captured', tone: 'success' as const }
-  if (orderStatus === 'cancelled') return { label: 'Refunded', tone: 'danger' as const }
-  if (orderStatus === 'pending') return { label: 'Awaiting payment', tone: 'warning' as const }
-  return { label: 'In progress', tone: 'secondary' as const }
 }
 
 export default function Payments() {
@@ -84,7 +79,7 @@ export default function Payments() {
         ) : (
           <div className="space-y-3">
             {records.map((o) => {
-              const ps = paymentStatus(o.status)
+              const ps = paymentStatusMeta(o.payment_status, o.status)
               return (
                 <div key={o.id} className="flex items-center justify-between rounded-2xl border border-border bg-surface p-5 shadow-card">
                   <div>

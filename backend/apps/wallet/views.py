@@ -25,6 +25,7 @@ from apps.wallet.serializers import (
     LinkDebtBookSerializer,
     MultiDebtBillSerializer,
     OfflineDebtBookCreateSerializer,
+    RedeemCashbackSerializer,
     RedeemVoucherSerializer,
     VoucherSerializer,
     WalletBalanceSerializer,
@@ -37,11 +38,12 @@ from apps.wallet.services import (
     delete_debt_customer,
     get_debt_balance,
     get_or_create_debt_book,
+    get_total_cashback_redeemed,
     get_wallet_balance,
     link_offline_debt_book,
-    mint_voucher,
     post_debt_note,
     record_payment,
+    redeem_cashback,
     redeem_voucher,
     update_debt_customer,
 )
@@ -81,12 +83,14 @@ class WalletBalanceView(APIView):
             .aggregate(total=Sum("delta"))["total"]
             or Decimal("0.00")
         )
+        total_redeemed = get_total_cashback_redeemed(user, shop)
 
         return Response(WalletBalanceSerializer({
             "cashback_balance": cashback,
             "debt_balance": debt,
             "active_vouchers": active_vouchers,
             "total_cashback_earned": total_earned,
+            "cashback_redeemed": total_redeemed,
         }).data)
 
 
@@ -447,20 +451,38 @@ class CustomerDebtNoteView(APIView):
         return Response(DebtNoteSerializer(note).data, status=status.HTTP_201_CREATED)
 
 
-class MintVoucherView(APIView):
-    """Manually trigger voucher minting for the current user."""
+class RedeemCashbackView(APIView):
+    """Redeem cashback from the wallet balance.
+
+    POST ``{}`` or ``{amount: null}`` → redeem the full current balance.
+    POST ``{amount: 250}``             → redeem a custom amount.
+
+    Rules enforced server-side: balance must be ≥ ₹10; a custom amount must
+    be ≥ ₹10 and ≤ the available balance. The redemption is recorded as an
+    immutable ``cashback_redeemed`` ledger row (appears in Cashback History).
+    """
 
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        voucher = mint_voucher(request.user, _resolve_shop(request))
-        if voucher:
-            return Response({
-                "message": f"Voucher {voucher.code} minted!",
-                "voucher": VoucherSerializer(voucher).data,
-            }, status=status.HTTP_201_CREATED)
+        serializer = RedeemCashbackSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response(
-            {"error": {"message": "Insufficient cashback balance to mint a voucher."}},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+        shop = _resolve_shop(request)
+        try:
+            entry = redeem_cashback(
+                request.user, shop, serializer.validated_data.get("amount")
+            )
+        except ValueError as e:
+            return Response(
+                {"error": {"message": str(e)}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response({
+            "message": f"Cashback redeemed: ₹{abs(entry.delta)}",
+            "ledger": WalletLedgerSerializer(entry).data,
+            "cashback_balance": str(get_wallet_balance(request.user, shop)),
+            "cashback_redeemed": str(get_total_cashback_redeemed(request.user, shop)),
+        })

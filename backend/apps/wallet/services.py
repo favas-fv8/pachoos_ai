@@ -1,6 +1,5 @@
-"""Wallet services — cashback credit, voucher minting, redemption, debt."""
+"""Wallet services — cashback credit, redemption, debt."""
 import re
-import secrets
 from decimal import Decimal
 
 from django.conf import settings
@@ -20,10 +19,7 @@ from apps.wallet.models import (
 
 BUSINESS = settings.BUSINESS
 
-
-def _generate_voucher_code() -> str:
-    """Generate a unique 10-char alphanumeric voucher code."""
-    return f"PCH-{secrets.token_hex(4).upper()}"
+MIN_CASHBACK_REDEEM = Decimal("10.00")
 
 
 @transaction.atomic
@@ -65,53 +61,60 @@ def credit_cashback(order) -> WalletLedger | None:
 
 
 @transaction.atomic
-def mint_voucher(user, shop) -> Voucher | None:
-    """Mint a ₹10 voucher from accumulated cashback. Returns voucher or None if insufficient."""
-    # Get current cashback balance (sum of all deltas)
-    from django.db.models import Sum
-    balance = (
-        WalletLedger.objects.filter(user=user, shop=shop)
-        .aggregate(total=Sum("delta"))["total"]
-        or Decimal("0.00")
-    )
+def redeem_cashback(user, shop, amount=None) -> WalletLedger:
+    """Redeem cashback from the wallet balance.
 
-    mint_amount = Decimal(str(BUSINESS["VOUCHER_MINT_AMOUNT"]))
-    if balance < mint_amount:
-        return None
+    ``amount=None`` redeems the full current balance. Redemption is only
+    allowed when the balance is at least ``MIN_CASHBACK_REDEEM`` (₹10); a
+    custom amount must also be ≥ ₹10 and can never exceed the balance.
+    """
+    balance = get_wallet_balance(user, shop)
+    if balance < MIN_CASHBACK_REDEEM:
+        raise ValueError("You need at least ₹10 cashback to redeem.")
 
-    code = _generate_voucher_code()
-    while Voucher.objects.filter(code=code).exists():
-        code = _generate_voucher_code()
+    if amount is None:
+        redeem_amount = _money(balance)
+    else:
+        redeem_amount = _money(amount)
+        if redeem_amount < MIN_CASHBACK_REDEEM:
+            raise ValueError("Minimum redemption amount is ₹10.")
+        if redeem_amount > balance:
+            raise ValueError("Amount exceeds your available cashback balance.")
 
-    voucher = Voucher.objects.create(
-        user=user,
-        shop=shop,
-        code=code,
-        amount=mint_amount,
-        status="active",
-        expires_at=timezone.now() + timezone.timedelta(days=BUSINESS["VOUCHER_EXPIRY_DAYS"]),
-    )
-
-    # Debit cashback
     last_entry = (
         WalletLedger.objects.filter(user=user, shop=shop)
         .order_by("-created_at")
         .first()
     )
     current_balance = last_entry.balance_after if last_entry else Decimal("0.00")
-    new_balance = current_balance - mint_amount
 
-    WalletLedger.objects.create(
+    return WalletLedger.objects.create(
         user=user,
         shop=shop,
-        delta=-mint_amount,
-        balance_after=new_balance,
-        reason="voucher_mint",
-        ref_voucher=voucher,
-        note=f"Minted voucher {code}",
+        delta=-redeem_amount,
+        balance_after=current_balance - redeem_amount,
+        reason="cashback_redeemed",
+        note=f"Cashback redeemed ₹{redeem_amount}",
     )
 
-    return voucher
+
+def get_total_cashback_redeemed(user, shop) -> Decimal:
+    """Total cashback redeemed so far (positive number).
+
+    Includes legacy ``voucher_mint`` rows (the old automatic ₹10 redemptions)
+    so the total always matches the redemption entries shown in Cashback
+    History.
+    """
+    from django.db.models import Sum
+
+    total = (
+        WalletLedger.objects.filter(
+            user=user, shop=shop, reason__in=["cashback_redeemed", "voucher_mint"]
+        )
+        .aggregate(total=Sum("delta"))["total"]
+        or Decimal("0.00")
+    )
+    return -_money(total)
 
 
 @transaction.atomic

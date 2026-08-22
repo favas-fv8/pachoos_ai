@@ -18,6 +18,12 @@ const SORT_OPTIONS = [
   { value: "rating", label: "Rating" },
 ]
 
+const FILTER_CHIPS = [
+  { key: "fresh", label: "Fresh", kind: "freshness" as const },
+  { key: "bakery", label: "Bakery", kind: "freshness" as const },
+  { key: "fruits", label: "Fruits", kind: "category" as const },
+]
+
 export default function Shop() {
   const [products, setProducts] = useState<Product[]>([])
   const [loading, setLoading] = useState(true)
@@ -97,19 +103,33 @@ export default function Shop() {
 
       {/* Filter chips */}
       <div className="mt-4 flex flex-wrap gap-2">
-        {["fresh", "bakery", "fruit"].map((f) => (
-          <button
-            key={f}
-            onClick={() => setFreshness(freshness === f ? "" : f)}
-            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-              freshness === f
-                ? "bg-primary text-primary-foreground"
-                : "border border-border bg-surface text-ink-muted hover:bg-surface-muted"
-            }`}
-          >
-            {f.charAt(0).toUpperCase() + f.slice(1)}
-          </button>
-        ))}
+        {FILTER_CHIPS.map((chip) => {
+          const isActive =
+            chip.kind === "freshness" ? freshness === chip.key : category === chip.key
+          return (
+            <button
+              key={chip.key}
+              onClick={() => {
+                if (isActive) {
+                  // Toggle off — clear only this chip's dimension.
+                  if (chip.kind === "freshness") setFreshness("")
+                  else setCategory("")
+                } else {
+                  // Single-select across chips, as before: picking one clears the other.
+                  setFreshness(chip.kind === "freshness" ? chip.key : "")
+                  setCategory(chip.kind === "category" ? chip.key : "")
+                }
+              }}
+              className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                isActive
+                  ? "bg-primary text-primary-foreground"
+                  : "border border-border bg-surface text-ink-muted hover:bg-surface-muted"
+              }`}
+            >
+              {chip.label}
+            </button>
+          )
+        })}
         <label className="flex cursor-pointer items-center gap-2 rounded-full border border-border bg-surface px-3 py-1 text-xs font-medium text-ink-muted hover:bg-surface-muted">
           <input
             type="checkbox"

@@ -19,6 +19,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { BackButton } from "@/components/ui/back-button"
+import { Input } from "@/components/ui/input"
 import { api, toApiError } from "@/lib/api/client"
 import { formatINR } from "@/lib/utils"
 import type { PaymentMethod } from "@/types"
@@ -35,6 +36,9 @@ const METHODS: { value: PaymentMethod; label: string; icon: typeof Smartphone }[
 const methodLabel = (m: string): string =>
   METHODS.find((x) => x.value === m)?.label ?? m.replace(/_/g, " ")
 
+// Minimum cashback a customer may put toward an order (mirrors backend rule).
+const MIN_CASHBACK_USE = 10
+
 type PageState = "loading" | "pending" | "paid" | "failed"
 
 export default function PaymentPage() {
@@ -50,6 +54,12 @@ export default function PaymentPage() {
   const [selectedMethod, setSelectedMethod] = useState<PaymentMethod>("demo_upi")
   const [submitting, setSubmitting] = useState(false)
   const [cashfreeLoading, setCashfreeLoading] = useState(false)
+
+  // ── Cashback use ───────────────────────────────────────────────────────
+  const [cashbackBalance, setCashbackBalance] = useState(0)
+  const [useCashback, setUseCashback] = useState(false)
+  const [cashbackMode, setCashbackMode] = useState<"full" | "custom">("full")
+  const [customCashback, setCustomCashback] = useState("")
 
   useEffect(() => {
     if (!orderId) return
@@ -77,10 +87,39 @@ export default function PaymentPage() {
         setState("failed")
       })
 
+    // Balance is non-critical — never block the page on it.
+    api
+      .get("/api/v1/wallet/balance/")
+      .then((res) => {
+        if (cancelled) return
+        setCashbackBalance(Number(res.data.cashback_balance) || 0)
+      })
+      .catch(() => {})
+
     return () => {
       cancelled = true
     }
   }, [orderId])
+
+  // ── Cashback rules (display only — the backend re-validates everything) ─
+  const maxUsableCashback = Math.max(0, Math.min(cashbackBalance, amount - 1))
+  // Below ₹10 the cashback-use option is hidden entirely.
+  const cashbackEligible = state === "pending" && cashbackBalance >= MIN_CASHBACK_USE
+  const parsedCustomCashback = Number(customCashback)
+  const customCashbackValid =
+    !useCashback ||
+    cashbackMode === "full" ||
+    (customCashback.trim() !== "" &&
+      Number.isFinite(parsedCustomCashback) &&
+      parsedCustomCashback >= MIN_CASHBACK_USE &&
+      parsedCustomCashback <= maxUsableCashback)
+  const appliedCashback =
+    useCashback && cashbackEligible && customCashbackValid
+      ? cashbackMode === "full"
+        ? maxUsableCashback
+        : Math.min(parsedCustomCashback, maxUsableCashback)
+      : 0
+  const finalAmount = Math.max(0, Number((amount - appliedCashback).toFixed(2)))
 
   // ── Demo payment confirmation ──────────────────────────────────────────
   const confirmDemo = async (simulate: "success" | "fail") => {
@@ -121,6 +160,7 @@ export default function PaymentPage() {
     try {
       const res = await api.post("/api/v1/payments/cashfree/order/", {
         order_id: orderId,
+        ...(appliedCashback > 0 ? { use_cashback: appliedCashback } : {}),
       })
       const { payment_session_id } = res.data
 
@@ -279,9 +319,80 @@ export default function PaymentPage() {
               Complete Payment
             </h2>
 
+            {/* ── Use cashback (optional — hidden below ₹10 balance) ─────── */}
+            {cashbackEligible && (
+              <div className="mb-4 rounded-xl border border-border bg-ink-subtle p-4">
+                <label className="flex cursor-pointer items-center gap-3">
+                  <input
+                    type="checkbox"
+                    checked={useCashback}
+                    onChange={(e) => {
+                      setUseCashback(e.target.checked)
+                      setError("")
+                    }}
+                    className="accent-primary"
+                  />
+                  <span className="text-sm font-medium">Use Cashback Balance</span>
+                  <span className="ml-auto text-sm font-semibold text-success">
+                    {formatINR(cashbackBalance)}
+                  </span>
+                </label>
+
+                {useCashback && (
+                  <>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {(["full", "custom"] as const).map((mode) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={() => setCashbackMode(mode)}
+                          className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                            cashbackMode === mode
+                              ? "bg-primary text-primary-foreground"
+                              : "border border-border bg-surface text-ink-muted hover:bg-surface-muted"
+                          }`}
+                        >
+                          {mode === "full"
+                            ? `Full balance (${formatINR(maxUsableCashback)})`
+                            : "Custom amount"}
+                        </button>
+                      ))}
+                    </div>
+
+                    {cashbackMode === "custom" && (
+                      <div className="mt-3 max-w-xs">
+                        <Input
+                          type="number"
+                          min={MIN_CASHBACK_USE}
+                          max={maxUsableCashback}
+                          step="0.01"
+                          placeholder={`Min ${formatINR(MIN_CASHBACK_USE)}, max ${formatINR(maxUsableCashback)}`}
+                          value={customCashback}
+                          onChange={(e) => setCustomCashback(e.target.value)}
+                        />
+                        {customCashback.trim() !== "" && !customCashbackValid && (
+                          <p className="mt-1 text-xs text-danger">
+                            Enter between {formatINR(MIN_CASHBACK_USE)} and{" "}
+                            {formatINR(maxUsableCashback)}.
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {appliedCashback > 0 && (
+                      <p className="mt-3 text-xs text-success">
+                        −{formatINR(appliedCashback)} cashback will be deducted from your
+                        wallet only after successful payment.
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+
             <button
               type="button"
-              disabled={cashfreeLoading}
+              disabled={cashfreeLoading || (useCashback && !customCashbackValid)}
               onClick={handleCashfreePayment}
               className="mb-4 flex w-full items-center justify-center gap-3 rounded-xl border-2 border-primary bg-primary/5 px-6 py-4 text-sm font-semibold transition-colors hover:bg-primary/10 disabled:opacity-50"
             >
@@ -292,11 +403,17 @@ export default function PaymentPage() {
               ) : (
                 <>
                   <ShieldCheck className="h-5 w-5" />
-                  Pay {formatINR(amount)} with Cashfree
+                  Pay {formatINR(finalAmount)} with Cashfree
                   <ExternalLink className="h-4 w-4 text-ink-muted" />
                 </>
               )}
             </button>
+
+            {appliedCashback > 0 && (
+              <p className="-mt-2 mb-4 text-center text-xs text-ink-muted">
+                Original payable {formatINR(amount)} − cashback {formatINR(appliedCashback)}
+              </p>
+            )}
 
             <p className="mb-4 text-center text-xs text-ink-muted">
               UPI, Cards, Net Banking, Wallets — powered by Cashfree Sandbox

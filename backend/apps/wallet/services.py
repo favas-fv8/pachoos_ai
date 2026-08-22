@@ -98,6 +98,51 @@ def redeem_cashback(user, shop, amount=None) -> WalletLedger:
     )
 
 
+@transaction.atomic
+def redeem_cashback_for_order(order) -> "WalletLedger | None":
+    """Deduct the cashback applied to ``order`` once its payment succeeds.
+
+    Called exclusively from the payment-success path — never on FAILED /
+    PENDING / USER_DROPPED outcomes. Writes a single immutable
+    ``cashback_redeemed`` ledger row referencing the order, which updates the
+    Cashback Balance, Cashback Redeemed total and Cashback History together.
+
+    Idempotent: guarded by ``order.cashback_used_at``, so webhook/return-URL
+    races and retries can never double-deduct.
+    """
+    amount = _money(order.cashback_used)
+    if amount <= 0 or order.cashback_used_at is not None:
+        return None
+
+    # Safety clamp: never deduct more than the wallet actually holds.
+    balance = get_wallet_balance(order.user, order.shop)
+    redeem_amount = min(amount, _money(balance))
+    if redeem_amount <= 0:
+        return None
+
+    last_entry = (
+        WalletLedger.objects.filter(user=order.user, shop=order.shop)
+        .order_by("-created_at")
+        .first()
+    )
+    current_balance = last_entry.balance_after if last_entry else Decimal("0.00")
+
+    ledger = WalletLedger.objects.create(
+        user=order.user,
+        shop=order.shop,
+        delta=-redeem_amount,
+        balance_after=current_balance - redeem_amount,
+        reason="cashback_redeemed",
+        ref_order=order,
+        note=f"Cashback used for order #{order.order_number}",
+    )
+
+    order.cashback_used_at = timezone.now()
+    order.save(update_fields=["cashback_used_at"])
+
+    return ledger
+
+
 def get_total_cashback_redeemed(user, shop) -> Decimal:
     """Total cashback redeemed so far (positive number).
 

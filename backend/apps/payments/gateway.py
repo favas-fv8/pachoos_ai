@@ -147,7 +147,9 @@ class CashfreeGateway(PaymentGateway):
         url = f"{self._base_url()}/orders"
         payload = {
             "order_id": cashfree_order_id,
-            "order_amount": float(order.grand_total),
+            # Net payable after validated cashback — always computed
+            # server-side from the Order, never trusted from the client.
+            "order_amount": float(order.payable_amount),
             "order_currency": "INR",
             "customer_details": {
                 "customer_id": str(order.user.id),

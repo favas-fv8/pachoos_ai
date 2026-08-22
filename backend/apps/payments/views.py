@@ -127,6 +127,7 @@ class OrderPaymentStatusView(APIView):
                     order.payment_method or (payment.method if payment else "")
                 ),
                 "amount": str(order.grand_total),
+                "cashback_used": str(order.cashback_used),
                 "transaction_id": payment.transaction_id if payment else "",
                 "created_at": order.created_at.isoformat(),
             }
@@ -490,15 +491,26 @@ class CustomerBankAccountDetailView(APIView):
 class CashfreeOrderView(APIView):
     """Create a Cashfree payment order and return the payment session ID.
 
-    POST ``{ order_id, customer_email?, customer_phone? }``
+    POST ``{ order_id, customer_email?, customer_phone?, use_cashback? }``
 
-    Returns ``{ cf_order_id, payment_session_id }`` for the frontend to
-    initialize the Cashfree checkout SDK.
+    ``use_cashback`` (optional, decimal): cashback the customer wants to put
+    toward this order. Validated server-side — must be ≥ ₹10 (or the full
+    balance when that is smaller), never more than the wallet balance or the
+    order total. The Cashfree order is created for
+    ``grand_total − applied cashback``. Wallet deduction happens only after
+    the payment succeeds (see ``apps.orders.services``).
+
+    Returns ``{ cf_order_id, payment_session_id, order_status }`` for the
+    frontend to initialize the Cashfree checkout SDK.
     """
 
     permission_classes = [IsAuthenticated]
 
     def post(self, request: HttpRequest) -> Response:
+        from decimal import Decimal, InvalidOperation
+
+        from apps.wallet.services import MIN_CASHBACK_REDEEM, get_wallet_balance
+
         order_id = request.data.get("order_id")
         if not order_id:
             return Response(
@@ -520,12 +532,63 @@ class CashfreeOrderView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # ── Resolve + validate the requested cashback server-side ────────
+        raw_cashback = request.data.get("use_cashback")
+        applied = Decimal("0.00")
+        if raw_cashback not in (None, "", False):
+            try:
+                requested = Decimal(str(raw_cashback)).quantize(Decimal("0.01"))
+            except (InvalidOperation, ValueError, TypeError):
+                return Response(
+                    {"error": {"message": "Invalid cashback amount."}},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if requested <= 0:
+                requested = Decimal("0.00")
+
+            if requested > 0:
+                if requested < MIN_CASHBACK_REDEEM:
+                    return Response(
+                        {
+                            "error": {
+                                "message": f"Minimum cashback amount is ₹{MIN_CASHBACK_REDEEM:.0f}."
+                            }
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                balance = get_wallet_balance(request.user, _resolve_shop(request))
+                payable = Decimal(str(order.grand_total)).quantize(Decimal("0.01"))
+                if requested > balance:
+                    return Response(
+                        {"error": {"message": "Amount exceeds your available cashback balance."}},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                # Keep at least ₹1 for the gateway charge.
+                if requested > payable - Decimal("1"):
+                    return Response(
+                        {"error": {"message": "Amount exceeds the order payable amount."}},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                applied = requested
+
+        # Persist the resolved amount — also *resets* a stale value when
+        # the customer retries without cashback.
+        if Decimal(str(order.cashback_used)) != applied:
+            order.cashback_used = applied
+            order.save(update_fields=["cashback_used", "updated_at"])
+
         # Check if there's already a pending Cashfree order
         existing_payment = Payment.objects.filter(
             order=order, provider="cashfree", status__in=["created", "authorized"]
         ).first()
-        if existing_payment and existing_payment.razorpay_order_id:
-            # Reuse existing Cashfree order if still valid
+        if (
+            existing_payment
+            and existing_payment.razorpay_order_id
+            and Decimal(str(order.cashback_used)) == applied
+        ):
+            # Reuse existing Cashfree order if still valid *and* created with
+            # the same cashback amount (otherwise fall through so the fresh
+            # session carries the correct net amount).
             from apps.payments.gateway import CashfreeGateway
 
             gw = CashfreeGateway()
@@ -545,6 +608,7 @@ class CashfreeOrderView(APIView):
                         "cf_order_id": existing_payment.razorpay_order_id,
                         "payment_session_id": existing_payment.razorpay_payment_id,
                         "order_status": verification.get("order_status", ""),
+                        "cashback_used": str(order.cashback_used),
                     }
                 )
 
@@ -575,7 +639,7 @@ class CashfreeOrderView(APIView):
                 "provider": "cashfree",
                 "razorpay_order_id": result["cf_order_id"],
                 "razorpay_payment_id": result["payment_session_id"],
-                "amount": order.grand_total,
+                "amount": order.payable_amount,
                 "status": "created",
                 "raw_response": {
                     "cashfree_merchant_order_id": result.get("order_id", str(order.id)),
@@ -588,6 +652,7 @@ class CashfreeOrderView(APIView):
                 "cf_order_id": result["cf_order_id"],
                 "payment_session_id": result["payment_session_id"],
                 "order_status": result["order_status"],
+                "cashback_used": str(order.cashback_used),
             }
         )
 
@@ -629,7 +694,8 @@ class CashfreeVerifyView(APIView):
                     "order_number": order.order_number,
                     "order_status": order.status,
                     "payment_status": order.payment_status,
-                    "amount": str(order.grand_total),
+                    "amount": str(order.payable_amount),
+                    "cashback_used": str(order.cashback_used),
                     "transaction_id": payment.transaction_id if payment else "",
                     "message": "Payment successful.",
                 }
@@ -645,6 +711,7 @@ class CashfreeVerifyView(APIView):
                     "order_number": order.order_number,
                     "payment_status": order.payment_status,
                     "amount": str(order.grand_total),
+                    "cashback_used": str(order.cashback_used),
                     "message": "No Cashfree payment found for this order.",
                 }
             )
@@ -668,7 +735,8 @@ class CashfreeVerifyView(APIView):
                 "payment_status": order.payment_status,
                 "cf_order_status": result.get("cf_order_status", ""),
                 "cf_payment_status": result.get("cf_payment_status", ""),
-                "amount": str(order.grand_total),
+                "amount": str(order.payable_amount),
+                "cashback_used": str(order.cashback_used),
                 "transaction_id": result["payment"].transaction_id if result.get("payment") else "",
                 "message": result["message"],
             }

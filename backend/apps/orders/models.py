@@ -1,4 +1,6 @@
 """Orders app — order lifecycle, timeline, delivery, payments."""
+from decimal import Decimal
+
 from django.conf import settings
 from django.db import models
 
@@ -75,6 +77,18 @@ class Order(UUIDPrimaryKeyModel, TimeStampedModel):
     cashback_earned = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     cashback_credited_at = models.DateTimeField(null=True, blank=True)
 
+    # Cashback applied at payment time. Deducted from the customer's wallet
+    # only once the payment actually succeeds (never on FAILED / PENDING /
+    # USER_DROPPED). The Cashfree order is created for the *net* amount.
+    cashback_used = models.DecimalField(
+        max_digits=10, decimal_places=2, default=0,
+        help_text="Cashback the customer chose to put toward this order.",
+    )
+    cashback_used_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Set when this amount was deducted from the wallet (idempotency guard).",
+    )
+
     # Cancellation
     cancellation_reason = models.TextField(blank=True)
     cancelled_at = models.DateTimeField(null=True, blank=True)
@@ -89,6 +103,13 @@ class Order(UUIDPrimaryKeyModel, TimeStampedModel):
 
     def __str__(self):
         return f"#{self.order_number} ({self.status})"
+
+    @property
+    def payable_amount(self):
+        """Amount actually chargeable via the gateway: grand_total minus the
+        cashback the customer applied. Always computed server-side — the
+        client never dictates the final charge."""
+        return max(Decimal("0.00"), self.grand_total - self.cashback_used)
 
 
 class OrderItem(TimeStampedModel):

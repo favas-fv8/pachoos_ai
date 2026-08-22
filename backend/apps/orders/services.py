@@ -309,7 +309,7 @@ def mark_payment_successful(
         existing.is_demo = is_demo
         existing.transaction_id = transaction_id
         existing.method = method
-        existing.amount = order.grand_total
+        existing.amount = order.payable_amount
         existing.status = "paid"
         existing.razorpay_order_id = razorpay_order_id or existing.razorpay_order_id
         existing.razorpay_payment_id = razorpay_payment_id or existing.razorpay_payment_id
@@ -331,7 +331,7 @@ def mark_payment_successful(
             is_demo=is_demo,
             transaction_id=transaction_id,
             method=method,
-            amount=order.grand_total,
+            amount=order.payable_amount,
             status="paid",
             razorpay_order_id=razorpay_order_id,
             razorpay_payment_id=razorpay_payment_id,
@@ -374,6 +374,13 @@ def _apply_paid_order_state(order: Order, payment: Payment) -> None:
         from apps.wallet.services import credit_cashback
 
         credit_cashback(order)
+
+    # Deduct the cashback the customer applied to this order — success path
+    # only (this function never runs for FAILED / PENDING / USER_DROPPED).
+    if order.cashback_used_at is None:
+        from apps.wallet.services import redeem_cashback_for_order
+
+        redeem_cashback_for_order(order)
 
 
 def _deduct_stock_for_order(order: Order) -> None:

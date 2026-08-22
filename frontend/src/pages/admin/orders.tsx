@@ -4,14 +4,16 @@ import { Search, Loader2 } from "lucide-react"
 import { Link } from "react-router-dom"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { BackButton } from "@/components/ui/back-button"
 import { api, toApiError } from "@/lib/api/client"
 import { paymentStatusMeta } from "@/lib/payment-status"
 import { Loader, StatusBadge } from "./shared"
 import { STATUS_OPTIONS } from "./constants"
 
-// The admin orders list shows only the latest 15 orders.
-const MAX_ORDERS = 15
+// Fetched in one latest-first batch, revealed 10 at a time via "See More".
+const FETCH_LIMIT = 200
+const PAGE_SIZE = 10
 
 interface Order {
   id: string
@@ -34,15 +36,17 @@ export default function AdminOrders() {
   const [search, setSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState("")
   const [updatingId, setUpdatingId] = useState<string | null>(null)
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
 
   const fetchOrders = useCallback(async () => {
     setLoading(true)
     setError("")
     try {
-      const params = new URLSearchParams({ limit: String(MAX_ORDERS) })
+      const params = new URLSearchParams({ limit: String(FETCH_LIMIT) })
       if (statusFilter) params.set("status", statusFilter)
       const res = await api.get(`/api/v1/admin-dashboard/all-orders/?${params.toString()}`)
       setOrders(res.data)
+      setVisibleCount(PAGE_SIZE)
     } catch {
       setError("Failed to load orders.")
     } finally {
@@ -77,7 +81,7 @@ export default function AdminOrders() {
       <BackButton to="/admin/dashboard" homeTo="/admin/dashboard" storeTo="/shop" />
       <div>
         <h1 className="font-display text-2xl font-bold">Orders</h1>
-        <p className="text-sm text-ink-muted">Review and manage the latest {MAX_ORDERS} customer orders.</p>
+        <p className="text-sm text-ink-muted">Review and manage customer orders.</p>
       </div>
 
       {error && (
@@ -120,7 +124,7 @@ export default function AdminOrders() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((o) => (
+              {filtered.slice(0, visibleCount).map((o) => (
                 <tr key={o.id} className="border-t border-border">
                   <td className="px-4 py-3 font-medium">
                     <Link to={`/admin/orders/${o.id}`} className="text-primary underline-offset-2 hover:underline">
@@ -169,6 +173,14 @@ export default function AdminOrders() {
               )}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {!loading && visibleCount < filtered.length && (
+        <div className="mt-5 flex justify-center">
+          <Button variant="outline" onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}>
+            See More
+          </Button>
         </div>
       )}
     </div>

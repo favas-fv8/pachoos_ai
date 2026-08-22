@@ -1,13 +1,16 @@
 // Admin Notifications — activity performed by the *other* admin on the shared
 // dashboard. Persisted in the backend (AdminNotification) so history survives
 // logout/restart, and both admins always see each other's catalog actions.
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { Bell, CheckCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { BackButton } from '@/components/ui/back-button'
 import { useAdminNotifications } from '@/hooks/useAdminNotifications'
 import { Loader } from './shared'
+
+// Latest-first list; reveal 10 notifications at a time via "See More".
+const PAGE_SIZE = 10
 
 const ACTION_LABELS: Record<string, { label: string; variant: 'default' | 'secondary' | 'warning' | 'danger' | 'success' | 'muted' }> = {
   product_added: { label: 'Product added', variant: 'success' },
@@ -27,6 +30,7 @@ const ACTION_LABELS: Record<string, { label: string; variant: 'default' | 'secon
 
 export default function AdminNotifications() {
   const { notifications, unreadCount, loading, markRead } = useAdminNotifications(15000)
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
 
   const sorted = useMemo(
     () => [...notifications].sort((a, b) => b.created_at.localeCompare(a.created_at)),
@@ -58,7 +62,7 @@ export default function AdminNotifications() {
           </div>
         ) : (
           <ul className="space-y-3">
-            {sorted.map((n) => {
+            {sorted.slice(0, visibleCount).map((n) => {
               const meta = ACTION_LABELS[n.action] ?? { label: n.action, variant: 'muted' as const }
               return (
                 <li
@@ -92,6 +96,14 @@ export default function AdminNotifications() {
           </ul>
         )}
       </div>
+
+      {!loading && visibleCount < sorted.length && (
+        <div className="mt-5 flex justify-center">
+          <Button variant="outline" onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}>
+            See More
+          </Button>
+        </div>
+      )}
     </div>
   )
 }

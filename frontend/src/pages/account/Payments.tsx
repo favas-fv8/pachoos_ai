@@ -16,10 +16,14 @@ interface PaymentRecord {
   created_at: string
 }
 
+// Latest-first list; reveal 10 at a time via "See More".
+const PAGE_SIZE = 10
+
 export default function Payments() {
   const [records, setRecords] = useState<PaymentRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -27,6 +31,7 @@ export default function Payments() {
     try {
       const data = await fetchListAll<PaymentRecord>('/api/v1/orders/')
       setRecords(data)
+      setVisibleCount(PAGE_SIZE)
     } catch (err) {
       setError(toApiError(err).message)
     } finally {
@@ -77,23 +82,33 @@ export default function Payments() {
             <p>No payments yet.</p>
           </div>
         ) : (
-          <div className="space-y-3">
-            {records.map((o) => {
-              const ps = paymentStatusMeta(o.payment_status, o.status)
-              return (
-                <div key={o.id} className="flex items-center justify-between rounded-2xl border border-border bg-surface p-5 shadow-card">
-                  <div>
-                    <p className="font-semibold">{o.order_number}</p>
-                    <p className="text-xs text-ink-muted">{new Date(o.created_at).toLocaleString()}</p>
+          <>
+            <div className="space-y-3">
+              {records.slice(0, visibleCount).map((o) => {
+                const ps = paymentStatusMeta(o.payment_status, o.status)
+                return (
+                  <div key={o.id} className="flex items-center justify-between rounded-2xl border border-border bg-surface p-5 shadow-card">
+                    <div>
+                      <p className="font-semibold">{o.order_number}</p>
+                      <p className="text-xs text-ink-muted">{new Date(o.created_at).toLocaleString()}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="font-semibold">₹{o.grand_total}</p>
+                      <Badge variant={ps.tone} className="mt-1">{ps.label}</Badge>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <p className="font-semibold">₹{o.grand_total}</p>
-                    <Badge variant={ps.tone} className="mt-1">{ps.label}</Badge>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
+                )
+              })}
+            </div>
+
+            {visibleCount < records.length && (
+              <div className="mt-5 flex justify-center">
+                <Button variant="outline" onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}>
+                  See More
+                </Button>
+              </div>
+            )}
+          </>
         )}
       </div>
     </motion.div>

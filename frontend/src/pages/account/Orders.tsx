@@ -32,10 +32,14 @@ const paymentColor = (s: string) => {
   return map[s] || 'warning'
 }
 
+// Latest-first list; reveal 10 at a time via "See More".
+const PAGE_SIZE = 10
+
 export default function Orders() {
   const [orders, setOrders] = useState<OrderListItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -43,6 +47,7 @@ export default function Orders() {
     try {
       const data = await fetchListAll<OrderListItem>('/api/v1/orders/')
       setOrders(data)
+      setVisibleCount(PAGE_SIZE)
     } catch (err) {
       setError(toApiError(err).message)
     } finally {
@@ -97,7 +102,7 @@ export default function Orders() {
     <div>
       <BackButton to="/account" />
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-3">
-        {orders.map((o) => (
+        {orders.slice(0, visibleCount).map((o) => (
           <Link
             key={o.id}
             to={`/track/${o.id}`}
@@ -131,6 +136,14 @@ export default function Orders() {
           </Link>
         ))}
       </motion.div>
+
+      {visibleCount < orders.length && (
+        <div className="mt-5 flex justify-center">
+          <Button variant="outline" onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}>
+            See More
+          </Button>
+        </div>
+      )}
     </div>
   )
 }

@@ -15,6 +15,9 @@ import { api, toApiError } from "@/lib/api/client"
 
 const MIN_REDEEM = 10
 
+// Latest-first history; reveal 10 entries at a time via "See More".
+const HISTORY_PAGE_SIZE = 10
+
 interface WalletBalance {
   cashback_balance: string
   debt_balance: string
@@ -43,6 +46,7 @@ export default function WalletPage() {
   const [redeemLoading, setRedeemLoading] = useState(false)
   const [redeemMsg, setRedeemMsg] = useState("")
   const [redeemError, setRedeemError] = useState("")
+  const [visibleHistory, setVisibleHistory] = useState(HISTORY_PAGE_SIZE)
 
   useEffect(() => {
     fetchWalletData()
@@ -58,6 +62,7 @@ export default function WalletPage() {
       ])
       setBalance(balRes.data)
       setHistory(historyRes.data)
+      setVisibleHistory(HISTORY_PAGE_SIZE)
     } catch {
       setError("Failed to load wallet data.")
     } finally {
@@ -258,21 +263,34 @@ export default function WalletPage() {
         {history.length === 0 ? (
           <p className="text-sm text-ink-muted">No transactions yet.</p>
         ) : (
-          <div className="space-y-2">
-            {history.map((h) => (
-              <div key={h.id} className="flex items-center justify-between rounded-xl bg-ink-subtle px-4 py-3">
-                <div>
-                  <p className="text-sm font-medium">{historyTitle(h)}</p>
-                  <p className="text-xs text-ink-muted">
-                    {new Date(h.created_at).toLocaleDateString()}
-                  </p>
+          <>
+            <div className="space-y-2">
+              {history.slice(0, visibleHistory).map((h) => (
+                <div key={h.id} className="flex items-center justify-between rounded-xl bg-ink-subtle px-4 py-3">
+                  <div>
+                    <p className="text-sm font-medium">{historyTitle(h)}</p>
+                    <p className="text-xs text-ink-muted">
+                      {new Date(h.created_at).toLocaleDateString()}
+                    </p>
+                  </div>
+                  <span className={`font-semibold ${parseFloat(h.delta) >= 0 ? "text-success" : "text-danger"}`}>
+                    {parseFloat(h.delta) >= 0 ? "+" : "−"}₹{Math.abs(parseFloat(h.delta)).toFixed(2)}
+                  </span>
                 </div>
-                <span className={`font-semibold ${parseFloat(h.delta) >= 0 ? "text-success" : "text-danger"}`}>
-                  {parseFloat(h.delta) >= 0 ? "+" : "−"}₹{Math.abs(parseFloat(h.delta)).toFixed(2)}
-                </span>
+              ))}
+            </div>
+
+            {visibleHistory < history.length && (
+              <div className="mt-5 flex justify-center">
+                <Button
+                  variant="outline"
+                  onClick={() => setVisibleHistory((c) => c + HISTORY_PAGE_SIZE)}
+                >
+                  See More
+                </Button>
               </div>
-            ))}
-          </div>
+            )}
+          </>
         )}
       </section>
     </div>

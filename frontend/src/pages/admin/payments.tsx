@@ -2,10 +2,15 @@
 import { useCallback, useEffect, useState } from "react"
 import { CreditCard } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { BackButton } from "@/components/ui/back-button"
 import { api } from "@/lib/api/client"
 import { paymentStatusMeta } from "@/lib/payment-status"
 import { Loader } from "./shared"
+
+// Fetched in one latest-first batch, revealed 10 at a time via "See More".
+const FETCH_LIMIT = 200
+const PAGE_SIZE = 10
 
 interface PaymentRecord {
   id: string
@@ -22,13 +27,15 @@ export default function AdminPayments() {
   const [records, setRecords] = useState<PaymentRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
 
   const load = useCallback(async () => {
     setLoading(true)
     setError("")
     try {
-      const res = await api.get("/api/v1/admin-dashboard/all-orders/")
+      const res = await api.get(`/api/v1/admin-dashboard/all-orders/?limit=${FETCH_LIMIT}`)
       setRecords(res.data)
+      setVisibleCount(PAGE_SIZE)
     } catch {
       setError("Failed to load payment history.")
     } finally {
@@ -74,7 +81,7 @@ export default function AdminPayments() {
                 </tr>
               </thead>
               <tbody>
-                {records.map((r) => {
+                {records.slice(0, visibleCount).map((r) => {
                   const ps = paymentStatusMeta(r.payment_status, r.status)
                   return (
                     <tr key={r.id} className="border-t border-border">
@@ -97,6 +104,14 @@ export default function AdminPayments() {
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {!loading && visibleCount < records.length && (
+          <div className="mt-5 flex justify-center">
+            <Button variant="outline" onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}>
+              See More
+            </Button>
           </div>
         )}
       </div>

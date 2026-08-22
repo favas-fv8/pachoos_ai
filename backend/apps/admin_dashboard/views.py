@@ -34,12 +34,18 @@ class DashboardStatsView(APIView):
 
 
 class RevenueChartView(APIView):
-    """GET daily revenue chart data."""
+    """GET daily revenue chart data.
+
+    ``?month=true`` → daily revenue for the current calendar month (paid
+    orders only); otherwise the trailing ``days`` window (default 30).
+    """
 
     permission_classes = [IsAuthenticated, IsAdmin]
 
     def get(self, request):
         shop = getattr(request, "shop", None)
+        if request.query_params.get("month") in ("1", "true", "True"):
+            return Response(get_revenue_chart(shop, month=True))
         days = int(request.query_params.get("days", 30))
         return Response(get_revenue_chart(shop, days))
 

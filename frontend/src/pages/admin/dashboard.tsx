@@ -10,10 +10,14 @@ import {
   TrendingUp,
   Loader2,
   Clock,
+  Eye,
+  X,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { BackButton } from "@/components/ui/back-button"
 import { api } from "@/lib/api/client"
+import { usePolling } from "@/hooks/usePolling"
 import { StatusBadge } from "./shared"
 
 interface DashboardStats {
@@ -37,7 +41,7 @@ interface LowStock {
   id: string
   name: string
   stock_quantity: number
-  low_stock_threshold: number
+  stock_unit: "kg" | "count"
 }
 
 interface RecentOrder {
@@ -64,21 +68,22 @@ export default function AdminDashboard() {
   const [revenueChart, setRevenueChart] = useState<RevenueDay[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
+  const [showChartModal, setShowChartModal] = useState(false)
 
   useEffect(() => {
-    fetchDashboardData()
+    void fetchDashboardData()
   }, [])
 
-  const fetchDashboardData = async () => {
-    setLoading(true)
+  const fetchDashboardData = async (silent = false) => {
+    if (!silent) setLoading(true)
     setError("")
     try {
       const [statsRes, topRes, lowRes, ordersRes, chartRes] = await Promise.all([
         api.get("/api/v1/admin-dashboard/stats/"),
         api.get("/api/v1/admin-dashboard/top-products/?limit=5"),
         api.get("/api/v1/admin-dashboard/low-stock/"),
-        api.get("/api/v1/admin-dashboard/recent-orders/?limit=10"),
-        api.get("/api/v1/admin-dashboard/revenue-chart/?days=30"),
+        api.get("/api/v1/admin-dashboard/recent-orders/?limit=5"),
+        api.get("/api/v1/admin-dashboard/revenue-chart/?month=true"),
       ])
       setStats(statsRes.data)
       setTopProducts(topRes.data)
@@ -88,9 +93,13 @@ export default function AdminDashboard() {
     } catch {
       setError("Failed to load dashboard data.")
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }
+
+  // Real-time refresh — stock changes (sales / admin updates), new orders and
+  // revenue land on the dashboard within 30s without any user interaction.
+  usePolling(() => void fetchDashboardData(true), 30000)
 
   if (loading) {
     return (
@@ -112,7 +121,7 @@ export default function AdminDashboard() {
       {/* Stat Cards */}
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {[
-          { icon: DollarSign, label: "Monthly Revenue", value: `₹${stats?.revenue.monthly || "0"}`, color: "success" },
+          { icon: DollarSign, label: "Monthly Revenue", value: `₹${Number(stats?.revenue.monthly ?? 0).toFixed(2)}`, color: "success" },
           { icon: ShoppingCart, label: "Monthly Orders", value: stats?.orders.monthly || "0", color: "primary" },
           { icon: Users, label: "Total Customers", value: stats?.customers.total || "0", color: "secondary" },
           { icon: Package, label: "Low Stock Items", value: stats?.products.low_stock || "0", color: "warning" },
@@ -138,29 +147,30 @@ export default function AdminDashboard() {
       </div>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-2">
-        {/* Revenue Chart (simple bar representation) */}
+        {/* Monthly Revenue chart (current calendar month, paid orders only) */}
         <section className="rounded-2xl border border-border bg-surface p-6 shadow-card">
-          <h2 className="font-display text-lg font-semibold mb-4 flex items-center gap-2">
-            <TrendingUp className="h-5 w-5 text-primary" /> Revenue (Last 30 Days)
-          </h2>
-          <div className="flex items-end gap-1 h-40">
-            {revenueChart.slice(-14).map((d) => {
-              const maxRev = Math.max(...revenueChart.map((x) => parseFloat(x.revenue) || 0), 1)
-              const height = (parseFloat(d.revenue) / maxRev) * 100
-              return (
-                <div key={d.date} className="flex-1 flex flex-col items-center">
-                  <div
-                    className="w-full bg-primary rounded-t"
-                    style={{ height: `${Math.max(height, 4)}%` }}
-                    title={`₹${d.revenue}`}
-                  />
-                  <span className="text-[10px] text-ink-muted mt-1">
-                    {d.date.slice(5)}
-                  </span>
-                </div>
-              )
-            })}
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <h2 className="font-display text-lg font-semibold flex items-center gap-2">
+              <TrendingUp className="h-5 w-5 text-primary" /> Monthly Revenue
+            </h2>
+            <button
+              type="button"
+              onClick={() => setShowChartModal(true)}
+              title="View larger chart"
+              className="rounded-lg p-1.5 text-ink-muted transition-colors hover:bg-ink-subtle hover:text-ink"
+            >
+              <Eye className="h-4 w-4" />
+            </button>
           </div>
+          {revenueChart.length === 0 ? (
+            <p className="py-10 text-center text-sm text-ink-muted">
+              No paid orders yet this month.
+            </p>
+          ) : (
+            <div className="flex items-end gap-1 h-40">
+              <RevenueBars data={revenueChart} />
+            </div>
+          )}
         </section>
 
         {/* Low Stock Alerts */}
@@ -171,12 +181,12 @@ export default function AdminDashboard() {
           {lowStock.length === 0 ? (
             <p className="text-sm text-ink-muted">All products well stocked!</p>
           ) : (
-            <div className="space-y-2">
+            <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
               {lowStock.map((p) => (
                 <div key={p.id} className="flex items-center justify-between rounded-xl bg-warning-muted px-4 py-3">
                   <div>
                     <p className="text-sm font-medium">{p.name}</p>
-                    <p className="text-xs text-ink-muted">Threshold: {p.low_stock_threshold}</p>
+                    <p className="text-xs text-ink-muted">{p.stock_unit === "kg" ? "Weighted item (kg)" : "Counted item"}</p>
                   </div>
                   <Badge variant={p.stock_quantity === 0 ? "danger" : "warning"}>
                     {p.stock_quantity} left
@@ -202,7 +212,7 @@ export default function AdminDashboard() {
                     <p className="text-xs text-ink-muted">Sold: {p.total_sold}</p>
                   </div>
                 </div>
-                <span className="text-sm font-semibold">₹{p.total_revenue}</span>
+                <span className="text-sm font-semibold">₹{Number(p.total_revenue).toFixed(2)}</span>
               </div>
             ))}
           </div>
@@ -231,6 +241,63 @@ export default function AdminDashboard() {
           </div>
         </section>
       </div>
+
+      {/* Larger monthly revenue view */}
+      {showChartModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={() => setShowChartModal(false)}
+        >
+          <div
+            className="w-full max-w-3xl rounded-2xl border border-border bg-surface p-6 shadow-card"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-6 flex items-center justify-between gap-3">
+              <h2 className="font-display text-lg font-semibold flex items-center gap-2">
+                <TrendingUp className="h-5 w-5 text-primary" /> Monthly Revenue
+              </h2>
+              <Button variant="ghost" size="sm" onClick={() => setShowChartModal(false)}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            {revenueChart.length === 0 ? (
+              <p className="py-16 text-center text-sm text-ink-muted">
+                No paid orders yet this month.
+              </p>
+            ) : (
+              <div className="flex items-end gap-1.5 h-72">
+                <RevenueBars data={revenueChart} />
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
+  )
+}
+
+function RevenueBars({ data }: { data: RevenueDay[] }) {
+  const maxRev = Math.max(...data.map((x) => parseFloat(x.revenue) || 0), 1)
+  return (
+    <>
+      {data.map((d) => {
+        const height = (parseFloat(d.revenue) / maxRev) * 100
+        return (
+          <div
+            key={d.date}
+            className="min-w-0 flex-1 flex flex-col items-center"
+            title={`${d.date} — ₹${Number(d.revenue).toFixed(2)}`}
+          >
+            <div
+              className="w-full bg-primary rounded-t"
+              style={{ height: `${Math.max(height, 4)}%` }}
+            />
+            <span className="text-[10px] text-ink-muted mt-1">
+              {Number(d.date.slice(8, 10))}
+            </span>
+          </div>
+        )
+      })}
+    </>
   )
 }

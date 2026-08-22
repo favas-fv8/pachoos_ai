@@ -2,10 +2,16 @@
 from datetime import timedelta
 from decimal import Decimal
 
-from django.db.models import Avg, Count, F, Q, Sum
+from django.db.models import Avg, Count, Q, Sum
 from django.utils import timezone
 
 from apps.admin_dashboard.activity import record_admin_activity
+
+# Low-stock rule: a product is "low" when its stock is at or below this value
+# (applies to both kg and count units). Kept independent from each product's
+# admin-configured restock threshold so dashboard alerts follow one consistent
+# business rule and update automatically as stock changes.
+LOW_STOCK_THRESHOLD = 3
 
 
 def get_customer_order_stats(user) -> dict:
@@ -36,6 +42,9 @@ def get_dashboard_stats(shop=None) -> dict:
     now = timezone.now()
     thirty_days_ago = now - timedelta(days=30)
     seven_days_ago = now - timedelta(days=7)
+    # Current calendar month start (local time) — monthly figures reset
+    # automatically when a new month begins. Historical data is untouched.
+    month_start = timezone.localtime().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
     order_qs = Order.objects.all()
     if shop:
@@ -46,9 +55,12 @@ def get_dashboard_stats(shop=None) -> dict:
         status__in=["accepted", "preparing", "packed", "out_for_delivery", "delivered"]
     ).aggregate(total=Sum("grand_total"))["total"] or Decimal("0.00")
 
+    # Monthly figures cover ONLY the current calendar month and ONLY orders
+    # whose payment actually succeeded — failed / pending / dropped payments
+    # never count toward revenue or order volume.
     monthly_revenue = order_qs.filter(
-        created_at__gte=thirty_days_ago,
-        status__in=["accepted", "preparing", "packed", "out_for_delivery", "delivered"],
+        created_at__gte=month_start,
+        payment_status="paid",
     ).aggregate(total=Sum("grand_total"))["total"] or Decimal("0.00")
 
     weekly_revenue = order_qs.filter(
@@ -58,19 +70,23 @@ def get_dashboard_stats(shop=None) -> dict:
 
     # Orders
     total_orders = order_qs.count()
-    monthly_orders = order_qs.filter(created_at__gte=thirty_days_ago).count()
+    monthly_orders = order_qs.filter(
+        created_at__gte=month_start, payment_status="paid"
+    ).count()
     pending_orders = order_qs.filter(status="pending").count()
 
     # Customers
-    total_customers = User.objects.filter(is_staff=False).count()
+    # Same predicate as the /admin/customers list (active, non-staff) so both
+    # surfaces always show the same count.
+    total_customers = User.objects.filter(is_staff=False, is_active=True).count()
     new_customers_month = User.objects.filter(
-        is_staff=False, created_at__gte=thirty_days_ago
+        is_staff=False, created_at__gte=month_start
     ).count()
 
     # Products
     total_products = Product.objects.count()
     low_stock_count = Product.objects.filter(
-        stock_quantity__lte=F("low_stock_threshold"), is_available=True
+        stock_quantity__lte=LOW_STOCK_THRESHOLD, is_available=True
     ).count()
 
     # Average order value
@@ -102,19 +118,32 @@ def get_dashboard_stats(shop=None) -> dict:
     }
 
 
-def get_revenue_chart(shop=None, days: int = 30) -> list:
-    """Get daily revenue data for chart."""
+def get_revenue_chart(shop=None, days: int = 30, month: bool = False) -> list:
+    """Get daily revenue data for chart.
+
+    ``month=True`` returns daily revenue for the **current calendar month**
+    (resets automatically on the 1st) counting only successfully paid orders —
+    the same basis as the Monthly Revenue stat card. Otherwise the historical
+    trailing ``days`` window is used unchanged.
+    """
     from django.db.models.functions import TruncDate
 
     from apps.orders.models import Order
 
     now = timezone.now()
-    start = now - timedelta(days=days)
 
-    qs = Order.objects.filter(
-        created_at__gte=start,
-        status__in=["accepted", "preparing", "packed", "out_for_delivery", "delivered"],
-    )
+    qs = Order.objects.all()
+    if month:
+        start = timezone.localtime().replace(
+            day=1, hour=0, minute=0, second=0, microsecond=0
+        )
+        qs = qs.filter(created_at__gte=start, payment_status="paid")
+    else:
+        start = now - timedelta(days=days)
+        qs = qs.filter(
+            created_at__gte=start,
+            status__in=["accepted", "preparing", "packed", "out_for_delivery", "delivered"],
+        )
     if shop:
         qs = qs.filter(shop=shop)
 
@@ -156,12 +185,12 @@ def get_top_products(shop=None, limit: int = 10) -> list:
 
 
 def get_low_stock_products(shop=None) -> list:
-    """Get products running low on stock."""
+    """Get products running low on stock (at or below LOW_STOCK_THRESHOLD)."""
     from apps.catalog.models import Product
 
     qs = Product.objects.filter(
         is_available=True,
-        stock_quantity__lte=F("low_stock_threshold"),
+        stock_quantity__lte=LOW_STOCK_THRESHOLD,
     ).order_by("stock_quantity")
 
     return [
@@ -169,20 +198,21 @@ def get_low_stock_products(shop=None) -> list:
             "id": str(p.id),
             "name": p.name,
             "stock_quantity": p.stock_quantity,
-            "low_stock_threshold": p.low_stock_threshold,
+            "stock_unit": p.stock_unit,
         }
         for p in qs
     ]
 
 
 def get_recent_orders(shop=None, limit: int = 20) -> list:
-    """Get recent orders."""
+    """Get recent orders (latest first)."""
     from apps.orders.models import Order
 
-    qs = Order.objects.select_related("user").order_by("-created_at")[:limit]
+    # Filter BEFORE slicing — Django cannot filter a sliced queryset, and
+    # doing so raised TypeError → 500 → "Failed to load dashboard data".
+    qs = Order.objects.select_related("user").order_by("-created_at")
     if shop:
         qs = qs.filter(shop=shop)
-
     return [
         {
             "id": str(o.id),
@@ -193,7 +223,7 @@ def get_recent_orders(shop=None, limit: int = 20) -> list:
             "grand_total": str(o.grand_total),
             "created_at": o.created_at.isoformat(),
         }
-        for o in qs
+        for o in qs[:limit]
     ]
 
 

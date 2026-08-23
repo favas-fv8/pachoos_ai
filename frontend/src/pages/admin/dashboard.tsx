@@ -167,8 +167,8 @@ export default function AdminDashboard() {
               No paid orders yet this month.
             </p>
           ) : (
-            <div className="flex items-end gap-1 h-40">
-              <RevenueBars data={revenueChart} />
+            <div className="h-40">
+              <RevenueLineChart data={revenueChart} />
             </div>
           )}
         </section>
@@ -265,8 +265,8 @@ export default function AdminDashboard() {
                 No paid orders yet this month.
               </p>
             ) : (
-              <div className="flex items-end gap-1.5 h-72">
-                <RevenueBars data={revenueChart} />
+              <div className="h-72">
+                <RevenueLineChart data={revenueChart} />
               </div>
             )}
           </div>
@@ -276,28 +276,113 @@ export default function AdminDashboard() {
   )
 }
 
-function RevenueBars({ data }: { data: RevenueDay[] }) {
-  const maxRev = Math.max(...data.map((x) => parseFloat(x.revenue) || 0), 1)
+/** Compact money label for the Y axis (₹1.2k / ₹850). */
+function fmtAxisRevenue(value: number): string {
+  if (value >= 1000) {
+    const k = value / 1000
+    return `₹${k % 1 === 0 ? k : k.toFixed(1)}k`
+  }
+  return `₹${Math.round(value)}`
+}
+
+/**
+ * Daily revenue line chart for the current calendar month.
+ *
+ * X-axis: every day of the month up to today (days without paid orders are
+ * zero-filled so the trend is honest). Y-axis: revenue. Paid-order data only —
+ * the backend endpoint already excludes failed/pending/dropped payments.
+ * Renders as an SVG polyline stretched over a fixed-size container
+ * (vector-effect keeps the stroke width uniform at any size); data points are
+ * HTML dots positioned in percentages so they stay perfectly circular.
+ */
+function RevenueLineChart({ data }: { data: RevenueDay[] }) {
+  // Zero-filled series: day 1..today of the current month.
+  const today = new Date().getDate()
+  const byDay = new Map(
+    data.map((d) => [Number(d.date.slice(8, 10)), parseFloat(d.revenue) || 0]),
+  )
+  const days = Array.from({ length: today }, (_, i) => ({
+    day: i + 1,
+    revenue: byDay.get(i + 1) ?? 0,
+  }))
+
+  const maxRev = Math.max(...days.map((d) => d.revenue), 1)
+  // X position across the month (single-day months center their point).
+  const xPct = (day: number) =>
+    days.length > 1 ? ((day - 1) / (days.length - 1)) * 100 : 50
+  // Y position: max touches the top edge, ₹0 sits on the baseline.
+  const yPct = (revenue: number) => (1 - revenue / maxRev) * 100
+
+  const points = days.map((d) => `${xPct(d.day)},${yPct(d.revenue)}`)
+
+  // Sparse X tick labels (~6) so up-to-31 labels never crowd the axis.
+  const labelStep = Math.max(1, Math.ceil(days.length / 6))
+
   return (
-    <>
-      {data.map((d) => {
-        const height = (parseFloat(d.revenue) / maxRev) * 100
-        return (
-          <div
-            key={d.date}
-            className="min-w-0 flex-1 flex flex-col items-center"
-            title={`${d.date} — ₹${Number(d.revenue).toFixed(2)}`}
+    <div className="flex h-full w-full flex-col">
+      <div className="flex min-h-0 flex-1 gap-2">
+        {/* Y-axis labels aligned with the top / mid / baseline gridlines */}
+        <div className="flex w-10 shrink-0 flex-col items-end justify-between text-right text-[10px] leading-none text-ink-muted">
+          <span>{fmtAxisRevenue(maxRev)}</span>
+          <span>{fmtAxisRevenue(maxRev / 2)}</span>
+          <span>₹0</span>
+        </div>
+        {/* Plot area — border-b doubles as the ₹0 baseline */}
+        <div className="relative min-w-0 flex-1 border-b border-border">
+          <svg
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+            className="h-full w-full overflow-visible text-primary"
           >
-            <div
-              className="w-full bg-primary rounded-t"
-              style={{ height: `${Math.max(height, 4)}%` }}
+            <line
+              x1="0"
+              y1="50"
+              x2="100"
+              y2="50"
+              className="text-border"
+              stroke="currentColor"
+              strokeWidth="1"
+              strokeDasharray="3 3"
+              vectorEffect="non-scaling-stroke"
             />
-            <span className="text-[10px] text-ink-muted mt-1">
-              {Number(d.date.slice(8, 10))}
+            {points.length > 1 && (
+              <polyline
+                points={points.join(" ")}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinejoin="round"
+                strokeLinecap="round"
+                vectorEffect="non-scaling-stroke"
+              />
+            )}
+          </svg>
+          {/* Data points (HTML so they stay round under non-uniform scaling) */}
+          {days.map((d) => (
+            <span
+              key={d.day}
+              className="absolute h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary"
+              style={{ left: `${xPct(d.day)}%`, top: `${yPct(d.revenue)}%` }}
+              title={`Day ${d.day} — ₹${d.revenue.toFixed(2)}`}
+            />
+          ))}
+        </div>
+      </div>
+      {/* X-axis: day-of-month labels pinned under their exact plot positions
+          (ml-12 = Y-axis gutter w-10 + gap-2) */}
+      <div className="relative ml-12 mt-1 h-3 text-[10px] leading-none text-ink-muted">
+        {days.map((d) =>
+          d.day === 1 || d.day % labelStep === 0 || d.day === days.length ? (
+            <span
+              key={d.day}
+              className="absolute top-0 -translate-x-1/2"
+              style={{ left: `${xPct(d.day)}%` }}
+            >
+              {d.day}
             </span>
-          </div>
-        )
-      })}
-    </>
+          ) : null,
+        )}
+      </div>
+    </div>
   )
 }

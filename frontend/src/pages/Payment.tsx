@@ -7,6 +7,7 @@ import { motion } from "framer-motion"
 import {
   CheckCircle,
   AlertCircle,
+  AlertTriangle,
   Loader2,
   Smartphone,
   CreditCard,
@@ -15,6 +16,7 @@ import {
   ArrowLeft,
   ShieldCheck,
   ExternalLink,
+  MapPin,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -55,6 +57,11 @@ export default function PaymentPage() {
   const [submitting, setSubmitting] = useState(false)
   const [cashfreeLoading, setCashfreeLoading] = useState(false)
 
+  // ── Delivery snapshot (server-computed at order placement) ─────────────
+  const [distanceKm, setDistanceKm] = useState<number | null>(null)
+  const [deliveryCharge, setDeliveryCharge] = useState(0)
+  const [deliveryFree, setDeliveryFree] = useState(false)
+
   // ── Cashback use ───────────────────────────────────────────────────────
   const [cashbackBalance, setCashbackBalance] = useState(0)
   const [useCashback, setUseCashback] = useState(false)
@@ -73,6 +80,9 @@ export default function PaymentPage() {
         setAmount(Number(res.data.amount))
         setMethod(res.data.payment_method || "")
         setTransactionId(res.data.transaction_id || "")
+        setDistanceKm(res.data.distance_km != null ? Number(res.data.distance_km) : null)
+        setDeliveryCharge(Number(res.data.delivery_charge) || 0)
+        setDeliveryFree(Boolean(res.data.delivery_free))
         if (res.data.payment_status === "paid") {
           setState("paid")
         } else if (res.data.payment_status === "failed") {
@@ -120,6 +130,33 @@ export default function PaymentPage() {
         : Math.min(parsedCustomCashback, maxUsableCashback)
       : 0
   const finalAmount = Math.max(0, Number((amount - appliedCashback).toFixed(2)))
+
+  // ── Delivery summary (distance computed server-side at order time) ─────
+  const deliverySummary = (
+    <div className="rounded-xl border border-border bg-ink-subtle p-4 text-sm">
+      {distanceKm == null ? (
+        <div className="flex items-start gap-2">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+          <p className="text-xs text-ink">
+            Delivery distance could not be determined (delivery location missing), so
+            the standard delivery charge of {formatINR(deliveryCharge)} applies.
+          </p>
+        </div>
+      ) : (
+        <div className="flex items-center justify-between gap-3">
+          <span className="flex items-center gap-2 text-ink-muted">
+            <MapPin className="h-4 w-4 shrink-0 text-primary" />
+            {distanceKm} km from the store
+          </span>
+          {deliveryFree ? (
+            <span className="font-semibold text-success">Free Delivery</span>
+          ) : (
+            <span className="text-ink">Delivery Charge: {formatINR(deliveryCharge)}</span>
+          )}
+        </div>
+      )}
+    </div>
+  )
 
   // ── Demo payment confirmation ──────────────────────────────────────────
   const confirmDemo = async (simulate: "success" | "fail") => {
@@ -277,6 +314,20 @@ export default function PaymentPage() {
                   <span className="font-mono text-xs">{transactionId}</span>
                 </div>
               )}
+              <div className="flex justify-between">
+                <span className="text-ink-muted">Delivery</span>
+                {deliveryFree ? (
+                  <span className="font-medium text-success">Free Delivery</span>
+                ) : (
+                  <span>{formatINR(deliveryCharge)}</span>
+                )}
+              </div>
+              {distanceKm != null && (
+                <div className="flex justify-between">
+                  <span className="text-ink-muted">Distance</span>
+                  <span>{distanceKm} km from the store</span>
+                </div>
+              )}
             </div>
 
             <div className="mt-6 flex flex-wrap justify-center gap-3">
@@ -318,6 +369,9 @@ export default function PaymentPage() {
             <h2 className="font-display text-lg font-semibold mb-4">
               Complete Payment
             </h2>
+
+            {/* ── Delivery distance & charge (server-computed) ───────────── */}
+            <div className="mb-4">{deliverySummary}</div>
 
             {/* ── Use cashback (optional — hidden below ₹10 balance) ─────── */}
             {cashbackEligible && (

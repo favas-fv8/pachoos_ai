@@ -96,9 +96,33 @@ class TestCartApi:
             data={"product_id": product.id, "quantity": 2},
             format="json",
         )
+        # No customer coordinates → distance undetermined → standard ₹40 fee.
         res = client.get(f"/api/v1/cart/carts/{cart_id}/summary/")
         assert res.status_code == 200, res.data
         assert Decimal(res.data["subtotal"]) == Decimal("450.00")
+        assert res.data["distance_km"] is None
+        assert Decimal(res.data["delivery_charge"]) == Decimal("40.00")
+        assert res.data["delivery_free"] is False
+        assert Decimal(res.data["grand_total"]) == Decimal("512.50")
+
+    def test_summary_within_radius_is_free_delivery(self, client, product):
+        """~1 km from the geolocated shop → free delivery."""
+        current = client.get("/api/v1/cart/carts/current/")
+        cart_id = current.data["id"]
+        client.post(
+            f"/api/v1/cart/carts/{cart_id}/add_item/",
+            data={"product_id": product.id, "quantity": 2},
+            format="json",
+        )
+        shop = Cart.objects.get(id=cart_id).shop
+        lat = float(shop.lat) + 1.0 / 111.19492664455874
+        res = client.get(
+            f"/api/v1/cart/carts/{cart_id}/summary/?customer_lat={lat}&customer_lon={shop.lng}"
+        )
+        assert res.status_code == 200, res.data
+        assert Decimal(res.data["subtotal"]) == Decimal("450.00")
+        assert res.data["delivery_free"] is True
+        assert Decimal(res.data["delivery_charge"]) == Decimal("0.00")
         assert Decimal(res.data["grand_total"]) == Decimal("472.50")
 
     def test_update_and_remove_item(self, client, product):

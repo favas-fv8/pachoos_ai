@@ -129,6 +129,13 @@ class OrderPaymentStatusView(APIView):
                 "amount": str(order.grand_total),
                 "cashback_used": str(order.cashback_used),
                 "transaction_id": payment.transaction_id if payment else "",
+                # Delivery snapshot captured at order placement (server-computed
+                # haversine). distance_km is None when coordinates were missing.
+                "distance_km": (
+                    str(order.distance_km) if order.distance_km is not None else None
+                ),
+                "delivery_charge": str(order.delivery_charge),
+                "delivery_free": order.delivery_free,
                 "created_at": order.created_at.isoformat(),
             }
         )

@@ -275,9 +275,11 @@ PASSWORD_RESET_TIMEOUT = env.int("PASSWORD_RESET_TIMEOUT", default=259200)  # 3 
 # Business rules (single source of truth; admin can adjust per-shop later)
 # ---------------------------------------------------------------------------
 BUSINESS = {
-    "FREE_DELIVERY_MIN_ORDER": 99.00,
+    # Delivery is purely distance-based (straight-line, server-computed):
+    # free within the radius, flat charge beyond it. When the distance cannot
+    # be determined (missing customer/shop coordinates) the flat charge applies.
     "FREE_DELIVERY_MAX_KM": 2.0,
-    "DELIVERY_CHARGE": 20.00,
+    "DELIVERY_CHARGE": 40.00,
     "CASHBACK_PER_INR": 100.0,  # ₹1 cashback per ₹100 spent
     "VOUCHER_MINT_AMOUNT": 10.00,
     "VOUCHER_EXPIRY_DAYS": 60,

@@ -217,7 +217,7 @@ export interface CartSummary {
   discount_total: number
   delivery_charge: number
   delivery_free: boolean
-  distance_km: number
+  distance_km: number | null
   tax_total: number
   grand_total: number
 }
@@ -328,6 +328,9 @@ export interface PaymentStatusResponse {
   payment_method: PaymentMethod | ''
   amount: string
   transaction_id: string
+  distance_km: string | null
+  delivery_charge: string
+  delivery_free: boolean
   created_at: string
 }
 

@@ -31,6 +31,9 @@ urlpatterns = [
     # Wallet routes.
     path("wallet/", include("apps.wallet.urls")),
 
+    # Shop configuration routes (admin-only).
+    path("shops/", include("apps.shops.urls")),
+
     # AI routes.
     path("ai/", include("apps.ai.urls")),
 

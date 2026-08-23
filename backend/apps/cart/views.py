@@ -59,20 +59,19 @@ class CartViewSet(viewsets.ModelViewSet):
     def summary(self, request, pk=None):
         """Server-side cart totals (used by the cart + checkout pages).
 
-        Optional query params: coupon_code, voucher_code, distance_km.
+        Optional query params: coupon_code, voucher_code, customer_lat,
+        customer_lon. The delivery distance is computed server-side from the
+        coordinates and the shop row — a client-supplied distance is never
+        trusted.
         """
         cart = self.get_object()
-        raw_distance = request.query_params.get("distance_km")
-        try:
-            distance_km = float(raw_distance) if raw_distance else None
-        except (TypeError, ValueError):
-            distance_km = None
         try:
             data = compute_cart_summary(
                 cart,
                 coupon_code=request.query_params.get("coupon_code"),
                 voucher_code=request.query_params.get("voucher_code"),
-                distance_km=distance_km,
+                customer_lat=request.query_params.get("customer_lat"),
+                customer_lon=request.query_params.get("customer_lon"),
                 user_id=request.user.id,
             )
         except ValueError as e:

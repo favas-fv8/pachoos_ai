@@ -13,6 +13,7 @@ Order lifecycle contract (Demo Payment):
                                  order stays pending, stock is untouched.
 """
 from decimal import Decimal
+from math import asin, cos, isfinite, radians, sin, sqrt
 from typing import Any
 
 from django.conf import settings
@@ -25,6 +26,55 @@ from apps.payments.models import Payment
 
 BUSINESS = settings.BUSINESS
 
+EARTH_RADIUS_KM = 6371.0
+
+
+def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance in km between two WGS84 points (straight line)."""
+    phi1, phi2 = radians(lat1), radians(lat2)
+    dphi = radians(lat2 - lat1)
+    dlmb = radians(lon2 - lon1)
+    a = sin(dphi / 2) ** 2 + cos(phi1) * cos(phi2) * sin(dlmb / 2) ** 2
+    return 2 * EARTH_RADIUS_KM * asin(sqrt(a))
+
+
+def parse_coordinate(value, *, lo: float, hi: float) -> float | None:
+    """Coerce a client-supplied coordinate to a finite in-range float.
+
+    Anything missing, malformed, non-finite or out of range becomes ``None``
+    so callers can fall back to the "distance undetermined" path.
+    """
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not isfinite(number):
+        return None
+    if number < lo or number > hi:
+        return None
+    return number
+
+
+def resolve_delivery_distance(customer_lat, customer_lon, shop) -> float | None:
+    """Straight-line km between the customer and the shop, rounded to 2dp.
+
+    Returns ``None`` whenever either side is missing/invalid — the caller then
+    applies the standard delivery charge and the UI explains why.
+    """
+    lat = parse_coordinate(customer_lat, lo=-90.0, hi=90.0)
+    lon = parse_coordinate(customer_lon, lo=-180.0, hi=180.0)
+    if lat is None or lon is None:
+        return None
+    if shop is None or shop.lat is None or shop.lng is None:
+        return None
+    try:
+        distance = haversine_km(lat, lon, float(shop.lat), float(shop.lng))
+    except (TypeError, ValueError):
+        return None
+    return round(distance, 2)
+
 
 def _dec(value) -> Decimal:
     """Coerce a float summary value into a Decimal for model fields, so the
@@ -32,19 +82,14 @@ def _dec(value) -> Decimal:
     return Decimal(str(value))
 
 
-def calculate_delivery(
-    subtotal: float, distance_km: float | None = None
-) -> dict[str, Any]:
-    """Calculate delivery charge based on business rules.
+def calculate_delivery(distance_km: float | None = None) -> dict[str, Any]:
+    """Delivery charge by straight-line distance only.
 
-    Free if subtotal >= FREE_DELIVERY_MIN_ORDER AND distance <= FREE_DELIVERY_MAX_KM.
-    Otherwise DELIVERY_CHARGE.
+    Free within ``FREE_DELIVERY_MAX_KM``; flat ``DELIVERY_CHARGE`` beyond it.
+    When the distance cannot be determined (missing coordinates) the flat
+    charge applies — free delivery is never granted on an unknown distance.
     """
-    if distance_km is None:
-        # In dev/testing, assume within free-delivery range.
-        distance_km = 1.0
-
-    if subtotal >= BUSINESS["FREE_DELIVERY_MIN_ORDER"] and distance_km <= BUSINESS["FREE_DELIVERY_MAX_KM"]:
+    if distance_km is not None and distance_km <= BUSINESS["FREE_DELIVERY_MAX_KM"]:
         return {"delivery_charge": 0.0, "delivery_free": True, "distance_km": distance_km}
 
     return {
@@ -133,15 +178,18 @@ def place_order(
     cart: Cart,
     user: Any,
     delivery_address_id: int,
-    distance_km: float | None = None,
+    customer_lat: float | None = None,
+    customer_lon: float | None = None,
     coupon_code: str | None = None,
     voucher_code: str | None = None,
     payment_method: str = "upi",
 ) -> Order:
     """Place an order from a cart. Atomic — rolls back on any failure.
 
-    Only snapshots the order; stock is deducted and cashback credited when the
-    payment is confirmed (see :func:`mark_payment_successful`).
+    The delivery distance is always computed server-side (haversine between
+    the customer coordinates and the shop row) — a client-supplied distance is
+    never trusted. Only snapshots the order; stock is deducted and cashback is
+    credited when the payment is confirmed (see :func:`mark_payment_successful`).
     """
     if not cart.items.exists():
         raise ValueError("Cart is empty.")
@@ -160,7 +208,8 @@ def place_order(
         cart,
         coupon_code=coupon_code,
         voucher_code=voucher_code,
-        distance_km=distance_km,
+        customer_lat=customer_lat,
+        customer_lon=customer_lon,
         user_id=user.id,
     )
 
@@ -178,7 +227,9 @@ def place_order(
         voucher_id=totals["voucher_id"],
         voucher_discount=_dec(totals["voucher_discount"]),
         delivery_address_id=delivery_address_id,
-        distance_km=_dec(totals["distance_km"]),
+        distance_km=(
+            _dec(totals["distance_km"]) if totals["distance_km"] is not None else None
+        ),
         delivery_free=totals["delivery_free"],
         payment_method=payment_method,
         payment_status="pending",

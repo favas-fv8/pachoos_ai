@@ -1,10 +1,25 @@
 """Tests for orders app — models, services (delivery, tax, coupon)."""
-import pytest
 from decimal import Decimal
+
+import pytest
 from rest_framework.test import APIClient
 
 from apps.orders.models import Order
-from apps.orders.services import calculate_delivery, calculate_tax
+from apps.orders.services import (
+    calculate_delivery,
+    calculate_tax,
+    resolve_delivery_distance,
+)
+
+# The conftest ``shop`` fixture sits at this location. 1° of latitude is
+# 6371·π/180 ≈ 111.195 km, so offsetting the customer's latitude by
+# km / KM_PER_DEG_LAT yields (almost exactly) a north-south `km` distance.
+SHOP_LAT, SHOP_LNG = 12.9716, 77.5946
+KM_PER_DEG_LAT = 111.19492664455874
+
+
+def _north_of_shop(distance_km: float) -> tuple[float, float]:
+    return SHOP_LAT + distance_km / KM_PER_DEG_LAT, SHOP_LNG
 
 
 @pytest.fixture
@@ -35,35 +50,64 @@ def order(db, shop, user):
 
 @pytest.mark.django_db
 class TestDeliveryCalculation:
-    def test_free_delivery_under_threshold(self):
-        result = calculate_delivery(subtotal=99.0, distance_km=1.5)
+    def test_free_delivery_within_radius(self):
+        result = calculate_delivery(1.5)
+        assert result["delivery_charge"] == 0.0
+        assert result["delivery_free"] is True
+        assert result["distance_km"] == 1.5
+
+    def test_free_delivery_at_exact_radius(self):
+        """Exactly 2 km is still free (<= comparison)."""
+        result = calculate_delivery(2.0)
         assert result["delivery_charge"] == 0.0
         assert result["delivery_free"] is True
 
-    def test_free_delivery_at_threshold(self):
-        result = calculate_delivery(subtotal=99.0, distance_km=2.0)
-        assert result["delivery_charge"] == 0.0
-        assert result["delivery_free"] is True
-
-    def test_free_delivery_over_threshold(self):
-        result = calculate_delivery(subtotal=150.0, distance_km=1.0)
-        assert result["delivery_charge"] == 0.0
-        assert result["delivery_free"] is True
-
-    def test_paid_delivery_over_distance(self):
-        result = calculate_delivery(subtotal=200.0, distance_km=3.0)
-        assert result["delivery_charge"] == 20.0
+    def test_paid_delivery_beyond_radius(self):
+        result = calculate_delivery(3.0)
+        assert result["delivery_charge"] == 40.0
         assert result["delivery_free"] is False
 
-    def test_paid_delivery_under_amount(self):
-        result = calculate_delivery(subtotal=50.0, distance_km=1.0)
-        assert result["delivery_charge"] == 20.0
+    def test_undetermined_distance_charges_standard_fee(self):
+        """Missing coordinates never grant free delivery."""
+        result = calculate_delivery(None)
+        assert result["delivery_charge"] == 40.0
         assert result["delivery_free"] is False
+        assert result["distance_km"] is None
 
-    def test_default_distance(self):
-        result = calculate_delivery(subtotal=200.0)
-        assert result["distance_km"] == 1.0
-        assert result["delivery_charge"] == 0.0
+
+@pytest.mark.django_db
+class TestDeliveryDistanceResolution:
+    """Server-side haversine between the customer and the shop row."""
+
+    def test_known_offset_distance(self, shop):
+        lat, lon = _north_of_shop(1.5)
+        distance = resolve_delivery_distance(lat, lon, shop)
+        assert distance is not None
+        assert abs(distance - 1.5) < 0.01
+
+    def test_exact_two_km_resolves_free(self, shop):
+        lat, lon = _north_of_shop(2.0)
+        distance = resolve_delivery_distance(lat, lon, shop)
+        assert distance == 2.0
+        assert calculate_delivery(distance)["delivery_free"] is True
+
+    def test_beyond_two_km_is_paid(self, shop):
+        lat, lon = _north_of_shop(2.5)
+        distance = resolve_delivery_distance(lat, lon, shop)
+        assert distance == 2.5
+        assert calculate_delivery(distance)["delivery_charge"] == 40.0
+
+    def test_missing_customer_coords_return_none(self, shop):
+        assert resolve_delivery_distance(None, None, shop) is None
+        assert resolve_delivery_distance("not-a-number", SHOP_LNG, shop) is None
+        assert resolve_delivery_distance(999.0, SHOP_LNG, shop) is None  # out of range
+
+    def test_missing_shop_coords_return_none(self, db, shop, user):
+        from apps.shops.models import Shop
+
+        bare = Shop.objects.create(name="No Geo", slug="no-geo")
+        assert bare.lat is None
+        assert resolve_delivery_distance(SHOP_LAT, SHOP_LNG, bare) is None
 
 
 @pytest.mark.django_db

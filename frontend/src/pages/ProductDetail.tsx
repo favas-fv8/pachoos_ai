@@ -38,6 +38,7 @@ export default function ProductDetail() {
   const navigate = useNavigate()
   const dispatch = useAppDispatch()
   const isAuthenticated = useAppSelector((s) => s.auth.isAuthenticated)
+  const deliveryAddress = useAppSelector((s) => s.ui.deliveryAddress)
 
   const [product, setProduct] = useState<Product | null>(null)
   const [loading, setLoading] = useState(true)
@@ -180,7 +181,10 @@ export default function ProductDetail() {
         variant_id: variant?.id ?? null,
         quantity,
         delivery_address_id: 0,
-        distance_km: 1.0,
+        // Backend computes the delivery distance from these coordinates.
+        ...(deliveryAddress
+          ? { customer_lat: deliveryAddress.lat, customer_lon: deliveryAddress.lon }
+          : {}),
         payment_method: "cashfree",
       })
       navigate(`/payment/${res.data.id}`)

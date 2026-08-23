@@ -13,6 +13,7 @@ from apps.orders.services import (
     apply_coupon,
     apply_voucher,
     calculate_delivery,
+    resolve_delivery_distance,
 )
 
 
@@ -26,14 +27,17 @@ def compute_cart_summary(
     *,
     coupon_code: str | None = None,
     voucher_code: str | None = None,
-    distance_km: float | None = None,
+    customer_lat: float | None = None,
+    customer_lon: float | None = None,
     user_id: int | None = None,
 ) -> dict[str, Any]:
     """Compute the full server-side cart summary (never trusts the client).
 
-    Returns item breakdown, subtotal (effective prices), product discount,
-    coupon/voucher discounts, GST (per product rate), delivery and grand total.
-    Raises ``ValueError`` for invalid/expired coupon or voucher codes.
+    The delivery distance is computed here from the customer coordinates and
+    the cart's shop row (haversine) — a client-supplied distance is never
+    accepted. Returns item breakdown, subtotal (effective prices), product
+    discount, coupon/voucher discounts, GST (per product rate), delivery and
+    grand total. Raises ``ValueError`` for invalid/expired coupon or voucher.
     """
     items = list(cart.items.select_related("product", "variant"))
 
@@ -81,7 +85,8 @@ def compute_cart_summary(
     product_discount = round(product_discount, 2)
     tax = round(tax, 2)
 
-    delivery = calculate_delivery(subtotal, distance_km)
+    distance_km = resolve_delivery_distance(customer_lat, customer_lon, cart.shop)
+    delivery = calculate_delivery(distance_km)
 
     coupon_discount = 0.0
     coupon_id = None

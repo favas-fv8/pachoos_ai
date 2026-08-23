@@ -1,6 +1,7 @@
 """Shared test fixtures for PACHOOS backend."""
-import pytest
 from decimal import Decimal
+
+import pytest
 
 
 def _get_user_model():
@@ -38,7 +39,7 @@ def admin_user(db):
 
 @pytest.fixture
 def shop(db):
-    """Create a test shop."""
+    """Create a test shop (geolocated so delivery-distance tests can resolve)."""
     from apps.shops.models import Shop
 
     return Shop.objects.create(
@@ -46,4 +47,6 @@ def shop(db):
         slug="pachoos-test",
         address_line1="123 Test Street",
         phone="+919876543210",
+        lat=Decimal("12.9716000"),
+        lng=Decimal("77.5946000"),
     )

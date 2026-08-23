@@ -4,7 +4,7 @@ import { MapPin, CreditCard, Tag, ArrowRight, Loader2, AlertTriangle } from "luc
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { api, toApiError } from "@/lib/api/client"
-import { useAppDispatch } from "@/store/hooks"
+import { useAppDispatch, useAppSelector } from "@/store/hooks"
 import { pushToast } from "@/store/slices/uiSlice"
 import { formatINR } from "@/lib/utils"
 import type { CartSummary } from "@/types"
@@ -21,13 +21,13 @@ const PAYMENT_METHODS = [
 export default function Checkout() {
   const dispatch = useAppDispatch()
   const navigate = useNavigate()
+  const deliveryAddress = useAppSelector((s) => s.ui.deliveryAddress)
   const [summary, setSummary] = useState<CartSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [addressId, setAddressId] = useState("")
   const [couponCode, setCouponCode] = useState("")
   const [voucherCode, setVoucherCode] = useState("")
-  const [distanceKm, setDistanceKm] = useState(1.0)
   const [paymentMethod, setPaymentMethod] = useState("demo_upi")
   const [placing, setPlacing] = useState(false)
 
@@ -39,7 +39,12 @@ export default function Checkout() {
       const params = new URLSearchParams()
       if (couponCode.trim()) params.set("coupon_code", couponCode.trim())
       if (voucherCode.trim()) params.set("voucher_code", voucherCode.trim())
-      params.set("distance_km", String(distanceKm))
+      // The backend computes the delivery distance from these coordinates —
+      // never send a distance value.
+      if (deliveryAddress) {
+        params.set("customer_lat", String(deliveryAddress.lat))
+        params.set("customer_lon", String(deliveryAddress.lon))
+      }
       const summaryRes = await api.get(`/api/v1/cart/carts/${cartRes.data.id}/summary/?${params.toString()}`)
       setSummary(summaryRes.data)
     } catch (err) {
@@ -49,7 +54,7 @@ export default function Checkout() {
     } finally {
       setLoading(false)
     }
-  }, [couponCode, voucherCode, distanceKm])
+  }, [couponCode, voucherCode, deliveryAddress])
 
   useEffect(() => {
     void loadSummary()
@@ -61,7 +66,9 @@ export default function Checkout() {
     try {
       const res = await api.post("/api/v1/orders/", {
         delivery_address_id: addressId ? parseInt(addressId, 10) : 1,
-        distance_km: distanceKm,
+        ...(deliveryAddress
+          ? { customer_lat: deliveryAddress.lat, customer_lon: deliveryAddress.lon }
+          : {}),
         coupon_code: couponCode.trim() || undefined,
         voucher_code: voucherCode.trim() || undefined,
         payment_method: paymentMethod,
@@ -123,18 +130,25 @@ export default function Checkout() {
               value={addressId}
               onChange={(e) => setAddressId(e.target.value)}
             />
-            <label className="block text-sm">
-              <span className="mb-1 block text-xs text-ink-muted">Distance (km)</span>
-              <Input
-                type="number"
-                min={0}
-                step={0.5}
-                value={distanceKm}
-                onChange={(e) => setDistanceKm(parseFloat(e.target.value) || 0)}
-              />
-            </label>
+            {deliveryAddress ? (
+              <div className="rounded-xl border border-border bg-surface-muted/60 p-3 text-sm">
+                <p className="font-medium text-ink">{deliveryAddress.label}</p>
+                {summary?.distance_km != null && (
+                  <p className="mt-0.5 text-xs text-ink-muted">
+                    {summary.distance_km} km from the store ·{" "}
+                    {summary.delivery_free ? "Free Delivery" : `Delivery charge ${formatINR(summary.delivery_charge)}`}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="flex items-start gap-2 rounded-xl border border-warning/40 bg-warning/10 p-3 text-xs text-ink">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+                No delivery location set. Use “Deliver to” in the header — without it we
+                cannot calculate the distance and the standard delivery charge applies.
+              </div>
+            )}
             <p className="text-xs text-ink-muted">
-              Free delivery if subtotal ≥ ₹99 and distance ≤ 2 km. Otherwise ₹20.
+              Free delivery within 2 km of the store. Beyond 2 km: ₹40 delivery charge.
             </p>
           </div>
         </section>
@@ -190,7 +204,8 @@ export default function Checkout() {
               onChange={(e) => setVoucherCode(e.target.value)}
             />
             <p className="text-xs text-ink-muted">
-              Totals update automatically as you change codes or distance.
+              Totals update automatically as you change codes; delivery is based on your
+              selected location.
             </p>
           </div>
         </section>

@@ -5,8 +5,9 @@ import {
   Package,
   ShoppingCart,
   Users,
-  Bell,
-  Menu,
+    Bell,
+    MapPin,
+    Menu,
   X,
   Leaf,
   Store,
@@ -24,6 +25,7 @@ import { toggleTheme } from '@/store/slices/uiSlice'
 import { logout } from '@/store/slices/authSlice'
 import { signOutFirebase } from '@/lib/firebase'
 import { useAdminNotifications } from '@/hooks/useAdminNotifications'
+import { ShopLocationPicker } from '@/components/location/ShopLocationPicker'
 import { Badge } from '@/components/ui/badge'
 import { Toaster } from '@/components/ui/toaster'
 
@@ -57,6 +59,7 @@ export function AdminLayout() {
   const dispatch = useAppDispatch()
   const navigate = useNavigate()
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [shopLocationOpen, setShopLocationOpen] = useState(false)
   const { unreadCount, refresh: refreshNotifications } = useAdminNotifications()
   const location = useLocation()
   const isAccountArea = location.pathname.startsWith('/account')
@@ -118,6 +121,17 @@ export function AdminLayout() {
             )}
           </NavLink>
         ))}
+        <button
+          type="button"
+          onClick={() => {
+            setShopLocationOpen(true)
+            setSidebarOpen(false)
+          }}
+          className="mt-1 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-ink-muted transition-colors hover:bg-surface-muted hover:text-ink"
+        >
+          <MapPin className="h-4 w-4" />
+          <span className="flex-1 text-left">Shop Location</span>
+        </button>
       </nav>
 
       <div className="space-y-1 border-t border-border p-3">
@@ -229,6 +243,7 @@ export function AdminLayout() {
         </main>
       </div>
       <Toaster />
+      <ShopLocationPicker open={shopLocationOpen} onClose={() => setShopLocationOpen(false)} />
     </div>
   )
 }

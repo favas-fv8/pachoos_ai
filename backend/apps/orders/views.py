@@ -9,6 +9,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.cart.models import Cart
 from apps.catalog.models import Product, ProductVariant
 from apps.core.permissions import IsAdmin
 from apps.orders.models import Delivery, Order, OrderItem, OrderTimeline
@@ -18,7 +19,13 @@ from apps.orders.serializers import (
     OrderSerializer,
     OrderTimelineSerializer,
 )
-from apps.orders.services import place_order, _dec, _next_order_number, calculate_delivery
+from apps.orders.services import (
+    _dec,
+    _next_order_number,
+    calculate_delivery,
+    place_order,
+    resolve_delivery_distance,
+)
 
 
 class OrderViewSet(viewsets.ModelViewSet):
@@ -50,7 +57,8 @@ class OrderViewSet(viewsets.ModelViewSet):
             cart=cart,
             user=request.user,
             delivery_address_id=data.get("delivery_address_id", 0),
-            distance_km=data.get("distance_km"),
+            customer_lat=data.get("customer_lat"),
+            customer_lon=data.get("customer_lon"),
             coupon_code=data.get("coupon_code"),
             voucher_code=data.get("voucher_code"),
             payment_method=data.get("payment_method", "upi"),
@@ -133,11 +141,14 @@ class DirectOrderView(APIView):
         "variant_id": int | null,
         "quantity": int,
         "delivery_address_id": int,
-        "distance_km": float | null,
+        "customer_lat": float | null,
+        "customer_lon": float | null,
         "payment_method": str
     }``
 
-    Creates order + order items directly. No cart involved.
+    Creates order + order items directly. No cart involved. The delivery
+    distance is computed server-side from the customer coordinates and the
+    shop row — a client-supplied distance is never trusted.
     Idempotent for duplicate clicks within 1 minute.
     """
 
@@ -149,7 +160,8 @@ class DirectOrderView(APIView):
         variant_id = request.data.get("variant_id")
         quantity = request.data.get("quantity", 1)
         delivery_address_id = request.data.get("delivery_address_id", 0)
-        distance_km = request.data.get("distance_km")
+        customer_lat = request.data.get("customer_lat")
+        customer_lon = request.data.get("customer_lon")
         payment_method = request.data.get("payment_method", "cashfree")
 
         # ── Validate product ──────────────────────────────────────────────
@@ -195,12 +207,13 @@ class DirectOrderView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # ── Cast distance_km ──────────────────────────────────────────────
-        if distance_km is not None:
-            try:
-                distance_km = float(distance_km)
-            except (TypeError, ValueError):
-                distance_km = None
+        # ── Compute delivery distance (server-side haversine) ─────────────
+        shop = request.shop
+        if not shop:
+            from apps.shops.models import Shop
+
+            shop = Shop.objects.first()
+        distance_km = resolve_delivery_distance(customer_lat, customer_lon, shop)
 
         # ── Deduplicate rapid duplicate clicks ────────────────────────────
         one_minute_ago = timezone.now() - timezone.timedelta(minutes=1)
@@ -230,14 +243,9 @@ class DirectOrderView(APIView):
         gst_pct = float(product.gst_percent or 0)
         tax = round(line_total * gst_pct / 100, 2)
 
-        delivery = calculate_delivery(line_total, distance_km)
+        delivery = calculate_delivery(distance_km)
         subtotal = round(line_total, 2)
         grand_total = round(subtotal + delivery["delivery_charge"] + tax, 2)
-
-        shop = request.shop
-        if not shop:
-            from apps.shops.models import Shop
-            shop = Shop.objects.first()
 
         # ── Create order + items atomically ───────────────────────────────
         with transaction.atomic():
@@ -251,7 +259,11 @@ class DirectOrderView(APIView):
                 tax_total=_dec(tax),
                 grand_total=_dec(grand_total),
                 delivery_address_id=delivery_address_id or 0,
-                distance_km=_dec(delivery["distance_km"]),
+                distance_km=(
+                    _dec(delivery["distance_km"])
+                    if delivery["distance_km"] is not None
+                    else None
+                ),
                 delivery_free=delivery["delivery_free"],
                 payment_method=payment_method,
                 payment_status="pending",

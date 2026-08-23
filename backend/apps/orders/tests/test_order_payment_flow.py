@@ -30,6 +30,22 @@ from apps.payments.gateway import DemoPaymentGateway
 from apps.payments.models import Payment
 from apps.payments.services import process_demo_payment
 
+# The conftest ``shop`` fixture sits here; offsetting the customer's latitude
+# by km / KM_PER_DEG_LAT yields a north-south distance of (almost exactly) km.
+SHOP_LAT, SHOP_LNG = 12.9716, 77.5946
+KM_PER_DEG_LAT = 111.19492664455874
+
+# ~1 km away → free delivery (within the 2 km radius).
+NEAR_COORDS = {
+    "customer_lat": SHOP_LAT + 1.0 / KM_PER_DEG_LAT,
+    "customer_lon": SHOP_LNG,
+}
+# ~2.5 km away → ₹40 delivery charge.
+FAR_COORDS = {
+    "customer_lat": SHOP_LAT + 2.5 / KM_PER_DEG_LAT,
+    "customer_lon": SHOP_LNG,
+}
+
 
 @pytest.fixture
 def category(db):
@@ -118,7 +134,7 @@ def customer2(db):
 @pytest.mark.django_db
 class TestCartSummaryNoDoubleDiscount:
     def test_subtotal_uses_effective_price_once(self, cart_with_item):
-        summary = compute_cart_summary(cart_with_item, distance_km=1.0)
+        summary = compute_cart_summary(cart_with_item, **NEAR_COORDS)
         assert summary["subtotal"] == 450.0
         assert summary["base_subtotal"] == 500.0
         assert summary["product_discount"] == 50.0
@@ -136,7 +152,7 @@ class TestCartSummaryNoDoubleDiscount:
             quantity=1,
             unit_price=Decimal("300.00"),
         )
-        summary = compute_cart_summary(cart, distance_km=1.0)
+        summary = compute_cart_summary(cart, **NEAR_COORDS)
         assert summary["subtotal"] == 240.0
         assert summary["product_discount"] == 60.0
 
@@ -145,11 +161,20 @@ class TestCartSummaryNoDoubleDiscount:
         # effective 225 * qty 2 — NOT 225 * 0.9 again
         assert item.line_total == 450.0
 
-    def test_free_delivery_breaks_past_distance(self, cart_with_item):
-        summary = compute_cart_summary(cart_with_item, distance_km=5.0)
-        assert summary["delivery_charge"] == 20.0
+    def test_paid_delivery_breaks_past_distance(self, cart_with_item):
+        """~2.5 km away → ₹40 charge on top of the item totals."""
+        summary = compute_cart_summary(cart_with_item, **FAR_COORDS)
+        assert summary["distance_km"] == 2.5
+        assert summary["delivery_charge"] == 40.0
         assert summary["delivery_free"] is False
-        assert summary["grand_total"] == 492.5
+        assert summary["grand_total"] == 512.5
+
+    def test_missing_coords_apply_standard_delivery(self, cart_with_item):
+        summary = compute_cart_summary(cart_with_item)
+        assert summary["distance_km"] is None
+        assert summary["delivery_free"] is False
+        assert summary["delivery_charge"] == 40.0
+        assert summary["grand_total"] == 512.5
 
 
 @pytest.mark.django_db
@@ -159,7 +184,7 @@ class TestPlaceOrder:
             cart=cart_with_item,
             user=user,
             delivery_address_id=1,
-            distance_km=1.0,
+            **NEAR_COORDS,
             payment_method="demo_upi",
         )
         assert order.payment_status == "pending"
@@ -171,7 +196,22 @@ class TestPlaceOrder:
         assert order.discount_total == Decimal("50.00")
         assert order.tax_total == Decimal("22.50")
         assert order.grand_total == Decimal("472.50")
+        assert order.distance_km == Decimal("1.00")
+        assert order.delivery_free is True
         assert order.cashback_earned > 0
+
+    def test_far_order_stores_distance_and_delivery_charge(self, cart_with_item, user):
+        order = place_order(
+            cart=cart_with_item,
+            user=user,
+            delivery_address_id=1,
+            **FAR_COORDS,
+            payment_method="demo_upi",
+        )
+        assert order.distance_km == Decimal("2.50")
+        assert order.delivery_free is False
+        assert order.delivery_charge == Decimal("40.00")
+        assert order.grand_total == Decimal("512.50")
 
     def test_stock_untouched_and_cart_cleared(self, cart_with_item, user, product):
         place_order(cart=cart_with_item, user=user, delivery_address_id=1)
@@ -259,7 +299,9 @@ class TestPaymentConfirmation:
         assert variant.stock_quantity == 48
 
     def test_cashback_credited_once(self, cart_with_item, user):
-        order = place_order(cart=cart_with_item, user=user, delivery_address_id=1)
+        order = place_order(
+            cart=cart_with_item, user=user, delivery_address_id=1, **NEAR_COORDS
+        )
         mark_payment_successful(order, method="demo_upi", provider="demo", is_demo=True)
         order.refresh_from_db()
         assert order.cashback_credited_at is not None
@@ -394,12 +436,20 @@ class TestDemoPaymentAPI:
         assert res.status_code == 404
 
     def test_status_endpoint(self, customer_client, cart_with_item, user):
-        order = place_order(cart=cart_with_item, user=user, delivery_address_id=1)
+        order = place_order(
+            cart=cart_with_item, user=user, delivery_address_id=1, **FAR_COORDS
+        )
         res = customer_client.get(f"/api/v1/payments/order/{order.id}/status/")
         assert res.status_code == 200
         assert res.data["payment_status"] == "pending"
         assert res.data["order_number"] == order.order_number
         assert res.data["order_status"] == "pending"
+        # Delivery snapshot is echoed for the payment page.
+        assert Decimal(res.data["distance_km"]) == Decimal("2.50")
+        assert Decimal(res.data["delivery_charge"]) == Decimal("40.00")
+        assert res.data["delivery_free"] is False
+        # amount (grand_total) includes the ₹40 delivery charge.
+        assert Decimal(res.data["amount"]) == Decimal("512.50")
 
 
 @pytest.mark.django_db

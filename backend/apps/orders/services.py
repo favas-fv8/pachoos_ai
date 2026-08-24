@@ -276,6 +276,10 @@ def place_order(
 
     # Clear cart
     cart.items.all().delete()
+    # Cart enforces one (user, is_active) row per state — purge this user's
+    # stale deactivated carts first or flipping this one to is_active=False
+    # raises an IntegrityError (500) on every order after the first.
+    Cart.objects.filter(user=user, is_active=False).exclude(pk=cart.pk).delete()
     cart.is_active = False
     cart.save(update_fields=["is_active"])
 

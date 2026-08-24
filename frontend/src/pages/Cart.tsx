@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import { motion } from "framer-motion"
-import { Link } from "react-router-dom"
+import { Link, useNavigate } from "react-router-dom"
 import {
   ShoppingBag,
   ArrowRight,
@@ -22,12 +22,17 @@ import type { CartSummary } from "@/types"
 
 export default function Cart() {
   const dispatch = useAppDispatch()
+  const navigate = useNavigate()
   const isAuthenticated = useAppSelector((s) => s.auth.isAuthenticated)
+  // The "Deliver To" location (header picker) — its coordinates drive the
+  // server-side delivery-distance calculation at order placement.
+  const deliveryAddress = useAppSelector((s) => s.ui.deliveryAddress)
 
   const [summary, setSummary] = useState<CartSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [updatingItem, setUpdatingItem] = useState<number | null>(null)
+  const [placing, setPlacing] = useState(false)
   const cartIdRef = useRef<string | null>(null)
 
   const load = useCallback(async () => {
@@ -75,6 +80,32 @@ export default function Cart() {
       dispatch(pushToast({ message: toApiError(err).message, variant: "error" }))
     } finally {
       setUpdatingItem(null)
+    }
+  }
+
+  // Places the order from the cart (the server snapshots every item,
+  // quantity, variant, price, discount, delivery charge and cashback) and
+  // jumps straight into the same /payment/<order-id> flow used by Buy Now.
+  const handleProceedToCheckout = async () => {
+    if (placing || !summary || summary.items.length === 0) return
+    setPlacing(true)
+    try {
+      const res = await api.post("/api/v1/orders/", {
+        delivery_address_id: 0,
+        ...(deliveryAddress
+          ? { customer_lat: deliveryAddress.lat, customer_lon: deliveryAddress.lon }
+          : {}),
+        payment_method: "cashfree",
+      })
+      dispatch(setCartItemCount(0))
+      dispatch(pushToast({ message: "Order placed! Choose your payment method.", variant: "success" }))
+      navigate(`/payment/${res.data.id}`)
+    } catch (err) {
+      dispatch(pushToast({ message: toApiError(err).message, variant: "error" }))
+      // Stock or cart state may have changed — refresh the summary.
+      await load()
+    } finally {
+      setPlacing(false)
     }
   }
 
@@ -292,13 +323,25 @@ export default function Cart() {
             </div>
           </div>
           <p className="mt-3 text-xs text-ink-muted">
-            Free delivery over ₹99 within 2 km. You can apply coupons and vouchers at checkout.
+            Free delivery over ₹99 within 2 km. Cashback can be applied on the payment page.
           </p>
-          <Link to="/checkout" className="mt-4 block">
-            <Button size="lg" className="w-full">
-              Proceed to Checkout <ArrowRight className="ml-2 h-4 w-4" />
-            </Button>
-          </Link>
+          <Button
+            size="lg"
+            className="mt-4 w-full"
+            disabled={placing}
+            onClick={() => void handleProceedToCheckout()}
+          >
+            {placing ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Placing order…
+              </>
+            ) : (
+              <>
+                Proceed to Checkout <ArrowRight className="ml-2 h-4 w-4" />
+              </>
+            )}
+          </Button>
         </div>
       </div>
     </div>

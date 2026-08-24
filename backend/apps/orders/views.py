@@ -53,16 +53,24 @@ class OrderViewSet(viewsets.ModelViewSet):
             )
 
         data = request.data
-        order = place_order(
-            cart=cart,
-            user=request.user,
-            delivery_address_id=data.get("delivery_address_id", 0),
-            customer_lat=data.get("customer_lat"),
-            customer_lon=data.get("customer_lon"),
-            coupon_code=data.get("coupon_code"),
-            voucher_code=data.get("voucher_code"),
-            payment_method=data.get("payment_method", "upi"),
-        )
+        try:
+            order = place_order(
+                cart=cart,
+                user=request.user,
+                delivery_address_id=data.get("delivery_address_id", 0),
+                customer_lat=data.get("customer_lat"),
+                customer_lon=data.get("customer_lon"),
+                coupon_code=data.get("coupon_code"),
+                voucher_code=data.get("voucher_code"),
+                payment_method=data.get("payment_method", "upi"),
+            )
+        except ValueError as e:
+            # Empty cart / insufficient stock / invalid coupon — surface the
+            # reason instead of an unhandled 500.
+            return Response(
+                {"error": {"code": "BUSINESS_RULE", "message": str(e)}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"])

@@ -493,3 +493,65 @@ class TestAdminOrders:
         assert res.data["payment"]["is_demo"] is True
         assert len(res.data["items"]) == 1
         assert Decimal(res.data["totals"]["grand_total"]) == order.grand_total
+
+
+@pytest.mark.django_db
+class TestCartCheckoutEndpoint:
+    """POST /api/v1/orders/ - the /cart "Proceed to Checkout" path that jumps
+    straight into the /payment/<order-id> flow."""
+
+    def test_places_order_from_cart_and_clears_it(
+        self, customer_client, cart_with_item, product
+    ):
+        res = customer_client.post(
+            "/api/v1/orders/",
+            {"delivery_address_id": 0, **NEAR_COORDS, "payment_method": "cashfree"},
+            format="json",
+        )
+        assert res.status_code == 201
+        order_id = res.data["id"]
+        assert res.data["payment_method"] == "cashfree"
+        assert res.data["payment_status"] == "pending"
+        # Product discount snapshotted at the effective price.
+        assert Decimal(res.data["subtotal"]) == Decimal("450.00")  # 2 x 225
+
+        # Cart emptied and deactivated after placement.
+        assert CartItem.objects.filter(cart=cart_with_item).count() == 0
+        assert not Cart.objects.get(pk=cart_with_item.pk).is_active
+
+        # The /payment/<order-id> page feed resolves the pending order.
+        status_res = customer_client.get(f"/api/v1/payments/order/{order_id}/status/")
+        assert status_res.status_code == 200
+        assert status_res.data["payment_status"] == "pending"
+
+    def test_insufficient_stock_returns_400(self, customer_client, cart, product):
+        CartItem.objects.create(cart=cart, product=product, quantity=999)
+        res = customer_client.post("/api/v1/orders/", {"delivery_address_id": 0}, format="json")
+        assert res.status_code == 400
+        assert "Insufficient stock" in res.data["error"]["message"]
+
+    def test_empty_cart_returns_400(self, customer_client, cart):
+        res = customer_client.post("/api/v1/orders/", {}, format="json")
+        assert res.status_code == 400
+
+
+@pytest.mark.django_db
+class TestRepeatCheckoutWithStaleCart:
+    """A previous order leaves an inactive cart behind; the (user, is_active)
+    unique constraint must never 500 the next checkout."""
+
+    def test_second_checkout_succeeds_despite_stale_inactive_cart(
+        self, customer_client, cart_with_item, cart, user
+    ):
+        # Simulate an earlier order: the old cart is already deactivated.
+        Cart.objects.create(user=user, shop=cart.shop, is_active=False)
+
+        res = customer_client.post(
+            "/api/v1/orders/",
+            {"delivery_address_id": 0, **NEAR_COORDS, "payment_method": "cashfree"},
+            format="json",
+        )
+        assert res.status_code == 201, res.data
+        # Invariant restored: exactly one inactive cart for this user.
+        assert Cart.objects.filter(user=user, is_active=False).count() == 1
+        assert not Cart.objects.get(pk=cart_with_item.pk).is_active

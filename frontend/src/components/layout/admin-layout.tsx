@@ -25,6 +25,7 @@ import { toggleTheme } from '@/store/slices/uiSlice'
 import { logout } from '@/store/slices/authSlice'
 import { signOutFirebase } from '@/lib/firebase'
 import { useAdminNotifications } from '@/hooks/useAdminNotifications'
+import { ChatWidget } from '@/components/chat/ChatWidget'
 import { ShopLocationPicker } from '@/components/location/ShopLocationPicker'
 import { Badge } from '@/components/ui/badge'
 import { Toaster } from '@/components/ui/toaster'
@@ -244,6 +245,9 @@ export function AdminLayout() {
       </div>
       <Toaster />
       <ShopLocationPicker open={shopLocationOpen} onClose={() => setShopLocationOpen(false)} />
+      {/* Admin-audience AI assistant — separate endpoint/permissions from the
+          customer assistant; admin data never mixes with customer scope. */}
+      <ChatWidget audience="admin" />
     </div>
   )
 }

@@ -9,6 +9,10 @@ class ChatMessageSerializer(serializers.Serializer):
         required=False,
         default=list,
     )
+    # The customer's current "Deliver To" location lives client-side
+    # (Redux uiSlice); passed through so the assistant can answer
+    # location questions. Sanitized server-side before use.
+    location = serializers.DictField(required=False, allow_null=True)
 
 
 class ChatResponseSerializer(serializers.Serializer):

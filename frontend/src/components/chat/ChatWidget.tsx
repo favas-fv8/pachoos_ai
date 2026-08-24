@@ -1,9 +1,14 @@
 // ChatWidget — floating AI assistant chat bubble.
+//
+// `audience` selects which backend assistant is used; the two are strictly
+// separated server-side (customer vs admin data, permissions and prompts).
 import { useState, useRef, useEffect } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { MessageCircle, X, Send, Loader2, Bot, User } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api/client"
+import { useAppSelector } from "@/store/hooks"
+import { ChatMarkdown } from "./ChatMarkdown"
 
 interface Message {
   id: string
@@ -12,13 +17,37 @@ interface Message {
   timestamp: Date
 }
 
-export function ChatWidget() {
+type Audience = "customer" | "admin"
+
+const AUDIENCE_CONFIG = {
+  customer: {
+    endpoint: "/api/v1/ai/chat/",
+    title: "PACHOOS Assistant",
+    subtitle: "Always here to help",
+    placeholder: "Ask me anything...",
+    welcome: "Hey! Welcome to PACHOOS! How can I help you today?",
+  },
+  admin: {
+    endpoint: "/api/v1/ai/admin-chat/",
+    title: "PACHOOS Admin Assistant",
+    subtitle: "Your live store data",
+    placeholder: "Ask about revenue, orders, stock...",
+    welcome:
+      "Hi! Ask me about revenue, orders, customers or stock — straight from the live dashboard.",
+  },
+} as const
+
+export function ChatWidget({ audience = "customer" }: { audience?: Audience }) {
+  const cfg = AUDIENCE_CONFIG[audience]
+  // The customer's "Deliver To" location (header picker) — sent with each
+  // customer-audience message so the assistant can answer location questions.
+  const deliveryAddress = useAppSelector((s) => s.ui.deliveryAddress)
   const [isOpen, setIsOpen] = useState(false)
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "welcome",
       role: "assistant",
-      content: "Hey! Welcome to PACHOOS! How can I help you today?",
+      content: cfg.welcome,
       timestamp: new Date(),
     },
   ])
@@ -45,10 +74,17 @@ export function ChatWidget() {
     setLoading(true)
 
     try {
-      const history = messages.map((m) => ({ role: m.role, content: m.content }))
-      const res = await api.post("/api/v1/ai/chat/", {
+      const history = messages
+        .filter((m) => m.id !== "welcome")
+        .map((m) => ({ role: m.role, content: m.content }))
+      const res = await api.post(cfg.endpoint, {
         message: input,
         history,
+        ...(audience === "customer" && {
+          location: deliveryAddress
+            ? { label: deliveryAddress.label, lat: deliveryAddress.lat, lon: deliveryAddress.lon }
+            : null,
+        }),
       })
 
       const assistantMsg: Message = {
@@ -89,6 +125,7 @@ export function ChatWidget() {
         whileHover={{ scale: 1.1 }}
         onClick={() => setIsOpen(!isOpen)}
         className="fixed bottom-6 right-6 z-50 grid h-14 w-14 place-items-center rounded-full bg-primary text-white shadow-lg hover:bg-primary/90"
+        aria-label={cfg.title}
       >
         {isOpen ? <X className="h-6 w-6" /> : <MessageCircle className="h-6 w-6" />}
       </motion.button>
@@ -109,8 +146,8 @@ export function ChatWidget() {
                 <Bot className="h-4 w-4" />
               </div>
               <div>
-                <p className="text-sm font-semibold">PACHOOS Assistant</p>
-                <p className="text-xs text-ink-muted">Always here to help</p>
+                <p className="text-sm font-semibold">{cfg.title}</p>
+                <p className="text-xs text-ink-muted">{cfg.subtitle}</p>
               </div>
             </div>
 
@@ -134,7 +171,9 @@ export function ChatWidget() {
                     {msg.role === "user" && (
                       <User className="mb-1 inline h-3 w-3 text-white/70" />
                     )}
-                    <p className="ml-1 inline">{msg.content}</p>
+                    <div className="ml-1 inline-block max-w-full align-top">
+                      <ChatMarkdown content={msg.content} />
+                    </div>
                   </div>
                 </div>
               ))}
@@ -155,7 +194,7 @@ export function ChatWidget() {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="Ask me anything..."
+                  placeholder={cfg.placeholder}
                   className="flex-1 rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/40"
                 />
                 <Button

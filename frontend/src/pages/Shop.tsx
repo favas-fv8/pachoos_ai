@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react"
+import { useSearchParams } from "react-router-dom"
 import { motion } from "framer-motion"
 import { Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -33,6 +34,15 @@ export default function Shop() {
   const [freshness, setFreshness] = useState("")
   const [availableOnly, setAvailableOnly] = useState(false)
   const [total, setTotal] = useState(0)
+  const [searchParams] = useSearchParams()
+
+  // Deep links like /shop?category=<slug> (Home "Shop by category" cards)
+  // drive the category filter — the slug maps 1:1 to the admin-created
+  // category on the backend.
+  const categoryParam = searchParams.get("category") ?? ""
+  useEffect(() => {
+    setCategory(categoryParam)
+  }, [categoryParam])
 
   const fetchProducts = async (silent = false) => {
     if (!silent) setLoading(true)

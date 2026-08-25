@@ -1,10 +1,51 @@
+import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Leaf, Truck, Shield, Sparkles } from 'lucide-react'
 import { ButtonLink } from '@/components/ui/button'
 import { Link } from 'react-router-dom'
 import { Recommendations } from '@/components/recommendations/Recommendations'
+import { fetchListAll } from '@/lib/api/client'
+
+/** Category fields served by the public catalog endpoint. */
+interface HomeCategory {
+  id: number
+  name: string
+  slug: string
+  image_url?: string
+}
+
+// Cosmetic icon per card — purely visual, data always comes from the API.
+const CATEGORY_EMOJI: Array<[RegExp, string]> = [
+  [/bak|cake|bread/i, '🍰'],
+  [/fruit/i, '🍎'],
+  [/pastr|croissant/i, '🥐'],
+  [/season|mango|berry/i, '🍊'],
+  [/snack|chip|cookie/i, '🍪'],
+  [/drink|juice|beverage/i, '🥤'],
+  [/dairy|milk|cheese/i, '🧀'],
+]
+
+const categoryEmoji = (cat: HomeCategory): string =>
+  CATEGORY_EMOJI.find(([re]) => re.test(cat.name) || re.test(cat.slug))?.[1] ?? '🛍️'
 
 export default function Home() {
+  const [categories, setCategories] = useState<HomeCategory[] | null>(null)
+
+  // Live admin-managed categories — created/removed in /admin/products.
+  useEffect(() => {
+    let cancelled = false
+    fetchListAll<HomeCategory>('/api/v1/catalog/categories/')
+      .then((cats) => {
+        if (!cancelled) setCategories(cats)
+      })
+      .catch(() => {
+        if (!cancelled) setCategories([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   return (
     <div className="flex flex-col">
       {/* Hero */}
@@ -36,31 +77,47 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Categories */}
+      {/* Categories — live from the admin-managed catalog */}
       <section className="container-px mx-auto py-16">
         <h2 className="font-display text-2xl font-semibold">Shop by category</h2>
-        <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
-          {[
-            { name: 'Bakery', emoji: '🍰', to: '/shop?category=bakery' },
-            { name: 'Fruits', emoji: '🍎', to: '/shop?category=fruits' },
-            { name: 'Pastries', emoji: '🥐', to: '/shop?category=pastries' },
-            { name: 'Seasonal', emoji: '🍊', to: '/shop?category=seasonal' },
-          ].map((cat) => (
-            <motion.div
-              key={cat.name}
-              whileHover={{ y: -4 }}
-              transition={{ duration: 0.2 }}
-            >
-              <Link
-                to={cat.to}
-                className="block rounded-2xl border border-border bg-surface p-6 text-center shadow-card hover:shadow-pop"
+        {categories === null ? (
+          <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="rounded-2xl border border-border bg-surface p-6 shadow-card">
+                <div className="mx-auto h-10 w-10 animate-pulse rounded-xl bg-surface-muted" />
+                <div className="mx-auto mt-3 h-4 w-3/4 animate-pulse rounded bg-surface-muted" />
+              </div>
+            ))}
+          </div>
+        ) : categories.length === 0 ? (
+          <p className="mt-6 text-sm text-ink-muted">No categories yet.</p>
+        ) : (
+          <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
+            {categories.map((cat) => (
+              <motion.div
+                key={cat.id}
+                whileHover={{ y: -4 }}
+                transition={{ duration: 0.2 }}
               >
-                <span className="text-4xl">{cat.emoji}</span>
-                <p className="mt-3 font-medium text-ink">{cat.name}</p>
-              </Link>
-            </motion.div>
-          ))}
-        </div>
+                <Link
+                  to={`/shop?category=${encodeURIComponent(cat.slug)}`}
+                  className="block rounded-2xl border border-border bg-surface p-6 text-center shadow-card hover:shadow-pop"
+                >
+                  {cat.image_url ? (
+                    <img
+                      src={cat.image_url}
+                      alt={cat.name}
+                      className="mx-auto h-12 w-12 rounded-xl object-cover"
+                    />
+                  ) : (
+                    <span className="text-4xl">{categoryEmoji(cat)}</span>
+                  )}
+                  <p className="mt-3 font-medium text-ink">{cat.name}</p>
+                </Link>
+              </motion.div>
+            ))}
+          </div>
+        )}
       </section>
 
       {/* Recommendations */}

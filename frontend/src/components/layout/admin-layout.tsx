@@ -245,9 +245,11 @@ export function AdminLayout() {
       </div>
       <Toaster />
       <ShopLocationPicker open={shopLocationOpen} onClose={() => setShopLocationOpen(false)} />
-      {/* Admin-audience AI assistant — separate endpoint/permissions from the
-          customer assistant; admin data never mixes with customer scope. */}
-      <ChatWidget audience="admin" />
+      {/* AI assistant — role-aware: an authenticated Admin always talks to
+          the Admin assistant (/ai/admin-chat) on every page, customers and
+          guests to the customer assistant; admin data never mixes with the
+          customer scope. */}
+      <ChatWidget />
     </div>
   )
 }

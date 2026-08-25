@@ -1,13 +1,17 @@
 // ChatWidget — floating AI assistant chat bubble.
 //
-// `audience` selects which backend assistant is used; the two are strictly
-// separated server-side (customer vs admin data, permissions and prompts).
+// The authenticated user's role selects which backend assistant is used; the
+// two are strictly separated server-side (customer vs admin data, permissions
+// and prompts). Admins always get the Admin AI on every page (including
+// /account and storefront pages), so they are never stripped to a guest by
+// the customer endpoint; customers and guests always get the customer AI.
 import { useState, useRef, useEffect } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { MessageCircle, X, Send, Loader2, Bot, User } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api/client"
 import { useAppSelector } from "@/store/hooks"
+import { isAdminRole } from "@/router/roles"
 import { ChatMarkdown } from "./ChatMarkdown"
 
 interface Message {
@@ -37,7 +41,10 @@ const AUDIENCE_CONFIG = {
   },
 } as const
 
-export function ChatWidget({ audience = "customer" }: { audience?: Audience }) {
+export function ChatWidget() {
+  // Role decides the assistant — not the page the widget is mounted on.
+  const user = useAppSelector((s) => s.auth.user)
+  const audience: Audience = isAdminRole(user?.role) ? "admin" : "customer"
   const cfg = AUDIENCE_CONFIG[audience]
   // The customer's "Deliver To" location (header picker) — sent with each
   // customer-audience message so the assistant can answer location questions.

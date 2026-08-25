@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useSearchParams } from "react-router-dom"
 import { motion } from "framer-motion"
 import { Search } from "lucide-react"
@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ProductCard } from "@/components/product/ProductCard"
 import { BackButton } from "@/components/ui/back-button"
-import { api } from "@/lib/api/client"
+import { api, fetchListAll } from "@/lib/api/client"
 import { usePolling } from "@/hooks/usePolling"
 import type { Product } from "@/types"
 
@@ -19,20 +19,20 @@ const SORT_OPTIONS = [
   { value: "rating", label: "Rating" },
 ]
 
-const FILTER_CHIPS = [
-  { key: "fresh", label: "Fresh", kind: "freshness" as const },
-  { key: "bakery", label: "Bakery", kind: "freshness" as const },
-  { key: "fruits", label: "Fruits", kind: "category" as const },
-]
+/** Category fields served by the public catalog endpoint. */
+interface ShopCategory {
+  id: number
+  name: string
+  slug: string
+}
 
 export default function Shop() {
   const [products, setProducts] = useState<Product[]>([])
+  const [categories, setCategories] = useState<ShopCategory[]>([])
   const [loading, setLoading] = useState(true)
   const [query, setQuery] = useState("")
   const [sortBy, setSortBy] = useState("popularity")
   const [category, setCategory] = useState("")
-  const [freshness, setFreshness] = useState("")
-  const [availableOnly, setAvailableOnly] = useState(false)
   const [total, setTotal] = useState(0)
   const [searchParams] = useSearchParams()
 
@@ -44,14 +44,37 @@ export default function Shop() {
     setCategory(categoryParam)
   }, [categoryParam])
 
+  // Live admin-managed categories — created/removed in /admin/products show
+  // up here automatically (chips key off the same slug the products API
+  // filters by, so every category maps to exactly its own products).
+  const loadCategories =
+    useCallback(async (): Promise<ShopCategory[] | null> => {
+      try {
+        const cats = await fetchListAll<ShopCategory>(
+          "/api/v1/catalog/categories/",
+        )
+        setCategories(cats)
+        // Drop a selection whose category was removed/deactivated by the
+        // Admin, so the grid never stays stuck on an empty dead filter.
+        setCategory((current) =>
+          current && !cats.some((c) => c.slug === current) ? "" : current,
+        )
+        return cats
+      } catch {
+        return null
+      }
+    }, [])
+
+  useEffect(() => {
+    void loadCategories()
+  }, [loadCategories])
+
   const fetchProducts = async (silent = false) => {
     if (!silent) setLoading(true)
     try {
       const params = new URLSearchParams()
       if (query) params.set("q", query)
       if (category) params.set("category", category)
-      if (freshness) params.set("freshness", freshness)
-      if (availableOnly) params.set("available", "true")
       params.set("sort_by", sortBy)
 
       const res = await api.get(`/api/v1/catalog/products/?${params.toString()}`)
@@ -68,11 +91,14 @@ export default function Shop() {
   useEffect(() => {
     const debounce = setTimeout(() => void fetchProducts(), 300)
     return () => clearTimeout(debounce)
-  }, [query, sortBy, category, freshness, availableOnly])
+  }, [query, sortBy, category])
 
-  // Silent refresh so admin price/stock changes reach the shop without any
-  // user interaction.
-  usePolling(() => void fetchProducts(true), 15000)
+  // Silent refresh so admin price/stock/category changes reach the shop
+  // without any user interaction.
+  usePolling(() => {
+    void loadCategories()
+    void fetchProducts(true)
+  }, 15000)
 
   return (
     <div className="container-px mx-auto py-8">
@@ -111,45 +137,27 @@ export default function Shop() {
         />
       </div>
 
-      {/* Filter chips */}
-      <div className="mt-4 flex flex-wrap gap-2">
-        {FILTER_CHIPS.map((chip) => {
-          const isActive =
-            chip.kind === "freshness" ? freshness === chip.key : category === chip.key
-          return (
-            <button
-              key={chip.key}
-              onClick={() => {
-                if (isActive) {
-                  // Toggle off — clear only this chip's dimension.
-                  if (chip.kind === "freshness") setFreshness("")
-                  else setCategory("")
-                } else {
-                  // Single-select across chips, as before: picking one clears the other.
-                  setFreshness(chip.kind === "freshness" ? chip.key : "")
-                  setCategory(chip.kind === "category" ? chip.key : "")
-                }
-              }}
-              className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-                isActive
-                  ? "bg-primary text-primary-foreground"
-                  : "border border-border bg-surface text-ink-muted hover:bg-surface-muted"
-              }`}
-            >
-              {chip.label}
-            </button>
-          )
-        })}
-        <label className="flex cursor-pointer items-center gap-2 rounded-full border border-border bg-surface px-3 py-1 text-xs font-medium text-ink-muted hover:bg-surface-muted">
-          <input
-            type="checkbox"
-            checked={availableOnly}
-            onChange={(e) => setAvailableOnly(e.target.checked)}
-            className="accent-primary"
-          />
-          In stock only
-        </label>
-      </div>
+      {/* Category filters — live from the admin-managed catalog */}
+      {categories.length > 0 && (
+        <div className="mt-4 flex flex-wrap gap-2">
+          {categories.map((cat) => {
+            const isActive = category === cat.slug
+            return (
+              <button
+                key={cat.id}
+                onClick={() => setCategory(isActive ? "" : cat.slug)}
+                className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                  isActive
+                    ? "bg-primary text-primary-foreground"
+                    : "border border-border bg-surface text-ink-muted hover:bg-surface-muted"
+                }`}
+              >
+                {cat.name}
+              </button>
+            )
+          })}
+        </div>
+      )}
 
       {/* Product grid */}
       {loading ? (
@@ -169,7 +177,7 @@ export default function Shop() {
           className="mt-12 flex flex-col items-center text-center"
         >
           <p className="text-ink-muted">No products match your search.</p>
-          <Button variant="link" onClick={() => { setQuery(""); setCategory(""); setFreshness(""); }}>
+          <Button variant="link" onClick={() => { setQuery(""); setCategory(""); }}>
             Clear filters
           </Button>
         </motion.div>

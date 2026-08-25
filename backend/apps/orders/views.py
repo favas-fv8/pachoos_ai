@@ -1,7 +1,8 @@
 """Orders views — order CRUD, checkout, timeline, delivery."""
+import time
 from decimal import Decimal
 
-from django.db import transaction
+from django.db import IntegrityError, OperationalError, transaction
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -26,6 +27,26 @@ from apps.orders.services import (
     place_order,
     resolve_delivery_distance,
 )
+
+# Concurrent duplicate submissions (double-click) can race on the daily
+# order-number sequence or on SQLite's single writer lock. Each placement
+# attempt is fully atomic, so a failed attempt rolls back cleanly and a
+# short bounded retry settles the race without ever surfacing a 500.
+ORDER_CREATE_ATTEMPTS = 4
+
+
+def create_order_with_retries(place_fn):
+    """Run ``place_fn`` (an atomic order-placement callable) with bounded
+    retries on transient write races (unique collision / locked database).
+    Re-raises non-transient errors untouched."""
+    for attempt in range(ORDER_CREATE_ATTEMPTS):
+        try:
+            return place_fn()
+        except (IntegrityError, OperationalError):
+            if attempt == ORDER_CREATE_ATTEMPTS - 1:
+                raise
+            time.sleep(0.05 * (attempt + 1))
+    raise RuntimeError("unreachable")
 
 
 class OrderViewSet(viewsets.ModelViewSet):
@@ -54,15 +75,17 @@ class OrderViewSet(viewsets.ModelViewSet):
 
         data = request.data
         try:
-            order = place_order(
-                cart=cart,
-                user=request.user,
-                delivery_address_id=data.get("delivery_address_id", 0),
-                customer_lat=data.get("customer_lat"),
-                customer_lon=data.get("customer_lon"),
-                coupon_code=data.get("coupon_code"),
-                voucher_code=data.get("voucher_code"),
-                payment_method=data.get("payment_method", "upi"),
+            order = create_order_with_retries(
+                lambda: place_order(
+                    cart=cart,
+                    user=request.user,
+                    delivery_address_id=data.get("delivery_address_id", 0),
+                    customer_lat=data.get("customer_lat"),
+                    customer_lon=data.get("customer_lon"),
+                    coupon_code=data.get("coupon_code"),
+                    voucher_code=data.get("voucher_code"),
+                    payment_method=data.get("payment_method", "upi"),
+                )
             )
         except ValueError as e:
             # Empty cart / insufficient stock / invalid coupon — surface the
@@ -70,6 +93,19 @@ class OrderViewSet(viewsets.ModelViewSet):
             return Response(
                 {"error": {"code": "BUSINESS_RULE", "message": str(e)}},
                 status=status.HTTP_400_BAD_REQUEST,
+            )
+        except (IntegrityError, OperationalError) as e:
+            # Exhausted retries on a genuine write race — answer with the
+            # JSON error envelope, never an HTML 500.
+            return Response(
+                {
+                    "error": {
+                        "code": "ORDER_CREATE_CONFLICT",
+                        "message": "Could not place the order due to a temporary conflict. Please try again.",
+                        "details": {"reason": str(e)[:200]},
+                    }
+                },
+                status=status.HTTP_409_CONFLICT,
             )
         return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
 
@@ -256,50 +292,66 @@ class DirectOrderView(APIView):
         grand_total = round(subtotal + delivery["delivery_charge"] + tax, 2)
 
         # ── Create order + items atomically ───────────────────────────────
-        with transaction.atomic():
-            order = Order.objects.create(
-                shop=shop,
-                user=user,
-                order_number=_next_order_number(shop.id),
-                subtotal=_dec(subtotal),
-                discount_total=_dec(product_discount),
-                delivery_charge=_dec(delivery["delivery_charge"]),
-                tax_total=_dec(tax),
-                grand_total=_dec(grand_total),
-                delivery_address_id=delivery_address_id or 0,
-                distance_km=(
-                    _dec(delivery["distance_km"])
-                    if delivery["distance_km"] is not None
-                    else None
-                ),
-                delivery_free=delivery["delivery_free"],
-                payment_method=payment_method,
-                payment_status="pending",
-                cashback_earned=_dec(
-                    round(grand_total / 100, 2)
-                ),
-            )
+        def _create_direct_order():
+            with transaction.atomic():
+                order = Order.objects.create(
+                    shop=shop,
+                    user=user,
+                    order_number=_next_order_number(shop.id),
+                    subtotal=_dec(subtotal),
+                    discount_total=_dec(product_discount),
+                    delivery_charge=_dec(delivery["delivery_charge"]),
+                    tax_total=_dec(tax),
+                    grand_total=_dec(grand_total),
+                    delivery_address_id=delivery_address_id or 0,
+                    distance_km=(
+                        _dec(delivery["distance_km"])
+                        if delivery["distance_km"] is not None
+                        else None
+                    ),
+                    delivery_free=delivery["delivery_free"],
+                    payment_method=payment_method,
+                    payment_status="pending",
+                    cashback_earned=_dec(
+                        round(grand_total / 100, 2)
+                    ),
+                )
 
-            OrderItem.objects.create(
-                order=order,
-                product=product,
-                variant=variant,
-                product_name=product.name,
-                variant_name=variant.name if variant else "",
-                quantity=qty,
-                unit_price=_dec(price),
-                discount=Decimal(str(product.discount_percent)),
-                gst_percent=Decimal(str(gst_pct)),
-                gst_amount=_dec(tax),
-                line_total=_dec(line_total),
-            )
+                OrderItem.objects.create(
+                    order=order,
+                    product=product,
+                    variant=variant,
+                    product_name=product.name,
+                    variant_name=variant.name if variant else "",
+                    quantity=qty,
+                    unit_price=_dec(price),
+                    discount=Decimal(str(product.discount_percent)),
+                    gst_percent=Decimal(str(gst_pct)),
+                    gst_amount=_dec(tax),
+                    line_total=_dec(line_total),
+                )
 
-            OrderTimeline.objects.create(
-                order=order,
-                status="pending",
-                note="Order placed via Buy Now",
-                actor_user=user,
-                actor_role=user.role,
+                OrderTimeline.objects.create(
+                    order=order,
+                    status="pending",
+                    note="Order placed via Buy Now",
+                    actor_user=user,
+                    actor_role=user.role,
+                )
+            return order
+
+        try:
+            order = create_order_with_retries(_create_direct_order)
+        except (IntegrityError, OperationalError) as e:
+            return Response(
+                {
+                    "error": {
+                        "code": "ORDER_CREATE_CONFLICT",
+                        "message": "Could not place the order due to a temporary conflict. Please try again.",
+                        "details": {"reason": str(e)[:200]},
+                    }
+                },
+                status=status.HTTP_409_CONFLICT,
             )
 
         return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)

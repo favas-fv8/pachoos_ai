@@ -105,6 +105,10 @@ DATABASES = {
         engine="django.db.backends.sqlite3",
     )
 }
+# SQLite allows a single writer; give concurrent writes (e.g. a double-clicked
+# checkout) time to settle instead of failing fast with "database is locked".
+if DATABASES["default"]["ENGINE"] == "django.db.backends.sqlite3":
+    DATABASES["default"].setdefault("OPTIONS", {})["timeout"] = 15
 
 # ---------------------------------------------------------------------------
 # Password hashing — Argon2 preferred, PBKDF2 fallback.

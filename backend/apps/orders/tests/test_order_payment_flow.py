@@ -9,6 +9,8 @@ admin order endpoints used by the orders page.
 from decimal import Decimal
 
 import pytest
+from django.db import IntegrityError, OperationalError
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.cart.models import Cart, CartItem
@@ -213,13 +215,15 @@ class TestPlaceOrder:
         assert order.delivery_charge == Decimal("40.00")
         assert order.grand_total == Decimal("512.50")
 
-    def test_stock_untouched_and_cart_cleared(self, cart_with_item, user, product):
+    def test_stock_untouched_and_cart_preserved(self, cart_with_item, user, product):
         place_order(cart=cart_with_item, user=user, delivery_address_id=1)
         product.refresh_from_db()
         assert product.stock_quantity == 50
-        assert not CartItem.objects.filter(cart=cart_with_item).exists()
+        # Checkout never mutates the cart — items stay and the cart stays
+        # active until the customer removes them manually.
+        assert CartItem.objects.filter(cart=cart_with_item).count() == 1
         cart_with_item.refresh_from_db()
-        assert cart_with_item.is_active is False
+        assert cart_with_item.is_active is True
 
     def test_order_items_snapshot_effective_price(self, cart_with_item, user):
         order = place_order(cart=cart_with_item, user=user, delivery_address_id=1)
@@ -500,7 +504,7 @@ class TestCartCheckoutEndpoint:
     """POST /api/v1/orders/ - the /cart "Proceed to Checkout" path that jumps
     straight into the /payment/<order-id> flow."""
 
-    def test_places_order_from_cart_and_clears_it(
+    def test_places_order_and_preserves_cart(
         self, customer_client, cart_with_item, product
     ):
         res = customer_client.post(
@@ -515,14 +519,62 @@ class TestCartCheckoutEndpoint:
         # Product discount snapshotted at the effective price.
         assert Decimal(res.data["subtotal"]) == Decimal("450.00")  # 2 x 225
 
-        # Cart emptied and deactivated after placement.
-        assert CartItem.objects.filter(cart=cart_with_item).count() == 0
-        assert not Cart.objects.get(pk=cart_with_item.pk).is_active
+        # Checkout must NOT modify, remove or reset any cart products —
+        # the cart is exactly as the customer left it on /cart.
+        assert CartItem.objects.filter(cart=cart_with_item).count() == 1
+        item = CartItem.objects.get(cart=cart_with_item)
+        assert item.product_id == product.id
+        assert item.quantity == 2
+        assert Cart.objects.get(pk=cart_with_item.pk).is_active
 
         # The /payment/<order-id> page feed resolves the pending order.
         status_res = customer_client.get(f"/api/v1/payments/order/{order_id}/status/")
         assert status_res.status_code == 200
         assert status_res.data["payment_status"] == "pending"
+
+    def test_cart_survives_every_payment_outcome(
+        self, customer_client, cart_with_item, product
+    ):
+        """SUCCESS, FAILED and PENDING (user dropped) results never touch the
+        cart; only the manual Remove button may delete items."""
+        order = place_order(cart=cart_with_item, user=cart_with_item.user,
+                            delivery_address_id=0)
+
+        # USER_DROPPED / PENDING: no payment recorded yet — cart intact.
+        status_res = customer_client.get(f"/api/v1/payments/order/{order.id}/status/")
+        assert status_res.status_code == 200
+        assert status_res.data["payment_status"] == "pending"
+        assert CartItem.objects.filter(cart=cart_with_item).count() == 1
+
+        # FAILED: simulated failure leaves order pending and cart intact.
+        fail_res = customer_client.post(
+            "/api/v1/payments/demo/confirm/",
+            {"order_id": str(order.id), "simulate": "fail"},
+            format="json",
+        )
+        assert fail_res.status_code == 200
+        assert fail_res.data["order"]["payment_status"] == "failed"
+        assert CartItem.objects.filter(cart=cart_with_item).count() == 1
+
+        # SUCCESS: paid order still leaves the cart exactly as it was.
+        ok_res = customer_client.post(
+            "/api/v1/payments/demo/confirm/",
+            {"order_id": str(order.id), "method": "demo_upi", "simulate": "success"},
+            format="json",
+        )
+        assert ok_res.status_code == 200
+        assert ok_res.data["order"]["payment_status"] == "paid"
+        assert CartItem.objects.filter(cart=cart_with_item).count() == 1
+        assert Cart.objects.get(pk=cart_with_item.pk).is_active
+
+        # Manual removal still works after all of the above.
+        remove_res = customer_client.post(
+            f"/api/v1/cart/carts/{cart_with_item.pk}/remove_item/",
+            {"item_id": CartItem.objects.get(cart=cart_with_item).id},
+            format="json",
+        )
+        assert remove_res.status_code == 200
+        assert CartItem.objects.filter(cart=cart_with_item).count() == 0
 
     def test_insufficient_stock_returns_400(self, customer_client, cart, product):
         CartItem.objects.create(cart=cart, product=product, quantity=999)
@@ -537,14 +589,14 @@ class TestCartCheckoutEndpoint:
 
 @pytest.mark.django_db
 class TestRepeatCheckoutWithStaleCart:
-    """A previous order leaves an inactive cart behind; the (user, is_active)
-    unique constraint must never 500 the next checkout."""
+    """Legacy inactive carts left by older versions must never break (or be
+    touched by) a checkout — orders no longer deactivate anything."""
 
     def test_second_checkout_succeeds_despite_stale_inactive_cart(
         self, customer_client, cart_with_item, cart, user
     ):
-        # Simulate an earlier order: the old cart is already deactivated.
-        Cart.objects.create(user=user, shop=cart.shop, is_active=False)
+        # Simulate a legacy leftover: an old deactivated cart.
+        stale = Cart.objects.create(user=user, shop=cart.shop, is_active=False)
 
         res = customer_client.post(
             "/api/v1/orders/",
@@ -552,6 +604,156 @@ class TestRepeatCheckoutWithStaleCart:
             format="json",
         )
         assert res.status_code == 201, res.data
-        # Invariant restored: exactly one inactive cart for this user.
+        # Checkout leaves ALL carts alone — active stays active, legacy rows
+        # stay untouched.
         assert Cart.objects.filter(user=user, is_active=False).count() == 1
-        assert not Cart.objects.get(pk=cart_with_item.pk).is_active
+        assert Cart.objects.get(pk=stale.pk).is_active is False
+        assert Cart.objects.get(pk=cart_with_item.pk).is_active
+
+
+@pytest.mark.django_db
+class TestOrderNumberGeneration:
+    """order_number is UNIQUE — generation must survive deleted orders."""
+
+    def test_number_skips_gaps_left_by_deleted_orders(self, user, shop):
+        from apps.orders.services import _next_order_number
+
+        today = timezone.now().strftime("%Y%m%d")
+        prefix = f"PCH-{today}-"
+        # Three orders placed today (each persisted before the next mints).
+        numbers = []
+        for _ in range(3):
+            n = _next_order_number(shop.id)
+            numbers.append(n)
+            Order.objects.create(
+                shop=shop,
+                user=user,
+                order_number=n,
+                payment_status="pending",
+            )
+        assert len(set(numbers)) == 3
+        # ...then the MIDDLE one is deleted (admin destroy route exists).
+        Order.objects.get(order_number=numbers[1]).delete()
+        # Old COUNT-based logic would mint the still-existing last number
+        # again and blow up with a UNIQUE violation; MAX-based logic must not.
+        assert _next_order_number(shop.id) == f"{prefix}{len(numbers) + 1:06d}"
+
+
+@pytest.mark.django_db
+class TestCheckoutTransientRaceHandling:
+    """POST /api/v1/orders/ must never answer an HTML 500 for transient
+    write races (unique collision / SQLite 'database is locked')."""
+
+    def _post_checkout(self, client):
+        return client.post(
+            "/api/v1/orders/",
+            {"delivery_address_id": 0, **NEAR_COORDS, "payment_method": "cashfree"},
+            format="json",
+        )
+
+    def test_integrity_error_race_is_retried_and_succeeds(
+        self, customer_client, cart_with_item, monkeypatch
+    ):
+        from apps.orders import views as order_views
+
+        real_place_order = order_views.place_order
+        calls = {"n": 0}
+
+        def flaky_place_order(**kwargs):
+            if calls["n"] == 0:
+                calls["n"] += 1
+                raise IntegrityError("UNIQUE constraint failed: orders_order.order_number")
+            return real_place_order(**kwargs)
+
+        monkeypatch.setattr(order_views, "place_order", flaky_place_order)
+        res = self._post_checkout(customer_client)
+        assert res.status_code == 201, res.data
+        assert Order.objects.count() == 1
+
+    def test_database_locked_race_is_retried_and_succeeds(
+        self, customer_client, cart_with_item, monkeypatch
+    ):
+        from apps.orders import views as order_views
+
+        real_place_order = order_views.place_order
+        calls = {"n": 0}
+
+        def flaky_place_order(**kwargs):
+            if calls["n"] < 2:
+                calls["n"] += 1
+                raise OperationalError("database is locked")
+            return real_place_order(**kwargs)
+
+        monkeypatch.setattr(order_views, "place_order", flaky_place_order)
+        res = self._post_checkout(customer_client)
+        assert res.status_code == 201, res.data
+
+    def test_exhausted_retries_return_json_conflict_not_500(
+        self, customer_client, cart_with_item, monkeypatch
+    ):
+        from apps.orders import views as order_views
+
+        def always_locked(**kwargs):
+            raise OperationalError("database is locked")
+
+        monkeypatch.setattr(order_views, "place_order", always_locked)
+        res = self._post_checkout(customer_client)
+        assert res.status_code == 409
+        assert res.data["error"]["code"] == "ORDER_CREATE_CONFLICT"
+        # Cart untouched — every failed attempt rolled back.
+        assert cart_with_item.items.count() == 1
+
+
+@pytest.mark.django_db
+class TestPaymentStatusPayload:
+    """The /payment/<order-id> page feed must carry the full order snapshot:
+    products, quantities, variants, prices, discounts, delivery, cashback."""
+
+    def test_status_payload_includes_items_and_money_snapshot(
+        self, customer_client, cart_with_item, variant, user
+    ):
+        # Second line: same product bought as a discounted "1kg" variant.
+        CartItem.objects.create(
+            cart=cart_with_item,
+            product=variant.product,
+            variant=variant,
+            quantity=2,
+            unit_price=Decimal("240.00"),
+        )
+        order = place_order(
+            cart=cart_with_item, user=user, delivery_address_id=0, **NEAR_COORDS
+        )
+        res = customer_client.get(f"/api/v1/payments/order/{order.id}/status/")
+        assert res.status_code == 200
+
+        data = res.data
+        # 450 (product line) + 480 (variant line) = 930 subtotal,
+        # 5% GST = 46.50, ~1 km away → free delivery.
+        assert Decimal(data["subtotal"]) == Decimal("930.00")
+        assert Decimal(data["discount_total"]) == Decimal("170.00")
+        assert Decimal(data["tax_total"]) == Decimal("46.50")
+        assert Decimal(data["amount"]) == Decimal("976.50")
+        assert Decimal(data["payable_amount"]) == Decimal("976.50")
+        assert Decimal(data["cashback_used"]) == Decimal("0.00")
+        assert data["delivery_free"] is True
+        assert data["distance_km"] is not None
+
+        items = data["items"]
+        assert len(items) == 2
+
+        product_line = next(i for i in items if i["variant_id"] is None)
+        assert product_line["product_name"] == "Chocolate Cake"
+        assert product_line["quantity"] == 2
+        assert Decimal(product_line["unit_price"]) == Decimal("225.00")
+        assert Decimal(product_line["base_price"]) == Decimal("250.00")
+        assert Decimal(product_line["discount_percent"]) == Decimal("10.00")
+        assert Decimal(product_line["line_total"]) == Decimal("450.00")
+
+        variant_line = next(i for i in items if i["variant_id"] == variant.id)
+        assert variant_line["product_name"] == "Chocolate Cake"
+        assert variant_line["variant_name"] == "1kg"
+        assert variant_line["quantity"] == 2
+        assert Decimal(variant_line["unit_price"]) == Decimal("240.00")
+        assert Decimal(variant_line["base_price"]) == Decimal("300.00")
+        assert Decimal(variant_line["discount_percent"]) == Decimal("20.00")
+        assert Decimal(variant_line["line_total"]) == Decimal("480.00")

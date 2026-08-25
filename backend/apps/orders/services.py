@@ -1,10 +1,11 @@
 """Order services — delivery rules, coupon/voucher engine, order placement.
 
 Order lifecycle contract (Demo Payment):
-  * ``place_order``            — snapshots the cart into an Order + OrderItems,
-                                 consumes the coupon/voucher once and clears the
-                                 cart. **No stock is deducted and no money is
-                                 taken here.**
+  * ``place_order``            — snapshots the cart into an Order + OrderItems
+                                 and consumes the coupon/voucher once. The cart
+                                 itself is NEVER modified — items stay until
+                                 the customer removes them manually. **No stock
+                                 is deducted and no money is taken here.**
   * ``mark_payment_successful`` — idempotently confirms a paid payment: creates
                                  the Payment row, marks the order paid/accepted,
                                  deducts stock exactly once, writes the
@@ -18,6 +19,7 @@ from typing import Any
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Max
 from django.utils import timezone
 
 from apps.cart.models import Cart
@@ -166,11 +168,22 @@ def apply_voucher(subtotal: float, voucher_code: str | None, user_id: int) -> di
 
 
 def _next_order_number(shop_id: int) -> str:
-    """Daily-per-shop order number, e.g. PCH-20260814-000001 (fits max_length=32)."""
+    """Daily-per-shop order number, e.g. PCH-20260814-000001 (fits max_length=32).
+
+    Derived from the highest existing numeric suffix for today rather than the
+    row count, so deleted/cancelled orders can never make a later order reuse
+    an already-taken number (order_number is UNIQUE — a collision 500s).
+    """
     today = timezone.now().strftime("%Y%m%d")
     prefix = f"PCH-{today}-"
-    count = Order.objects.filter(shop_id=shop_id, order_number__startswith=prefix).count()
-    return f"{prefix}{count + 1:06d}"
+    last = (
+        Order.objects.filter(shop_id=shop_id, order_number__startswith=prefix)
+        .aggregate(max_number=Max("order_number"))
+        .get("max_number")
+    )
+    # Same-width zero-padded suffixes sort identically as strings and numbers.
+    next_seq = int(last[len(prefix):]) + 1 if last else 1
+    return f"{prefix}{next_seq:06d}"
 
 
 @transaction.atomic
@@ -190,6 +203,11 @@ def place_order(
     the customer coordinates and the shop row) — a client-supplied distance is
     never trusted. Only snapshots the order; stock is deducted and cashback is
     credited when the payment is confirmed (see :func:`mark_payment_successful`).
+
+    The cart itself is deliberately left untouched: items remain and the cart
+    stays active until the customer removes them via the manual Remove/clear
+    actions. No payment outcome (SUCCESS / PENDING / FAILED / USER_DROPPED)
+    ever mutates the cart.
     """
     if not cart.items.exists():
         raise ValueError("Cart is empty.")
@@ -247,6 +265,14 @@ def place_order(
         )
         gst_pct = float(item.product.gst_percent or 0)
         line_total = round(price * item.quantity, 2)
+        # Snapshot the LIVE product/variant discount that produced the
+        # effective price — never the stale CartItem.discount_percent stored
+        # at add-to-cart time, which drifts when admin edits prices later.
+        live_discount = (
+            item.variant.discount_percent
+            if item.variant_id
+            else item.product.discount_percent
+        )
         OrderItem.objects.create(
             order=order,
             product=item.product,
@@ -255,7 +281,7 @@ def place_order(
             variant_name=item.variant.name if item.variant_id else "",
             quantity=item.quantity,
             unit_price=_dec(price),
-            discount=item.discount_percent,
+            discount=live_discount,
             gst_percent=_dec(gst_pct),
             gst_amount=_dec(round(line_total * (gst_pct / 100), 2)),
             line_total=_dec(line_total),
@@ -274,14 +300,9 @@ def place_order(
         actor_role=user.role,
     )
 
-    # Clear cart
-    cart.items.all().delete()
-    # Cart enforces one (user, is_active) row per state — purge this user's
-    # stale deactivated carts first or flipping this one to is_active=False
-    # raises an IntegrityError (500) on every order after the first.
-    Cart.objects.filter(user=user, is_active=False).exclude(pk=cart.pk).delete()
-    cart.is_active = False
-    cart.save(update_fields=["is_active"])
+    # The cart is intentionally NOT cleared or deactivated here — items are
+    # only ever removed by the customer via the manual Remove/clear actions,
+    # regardless of the payment outcome.
 
     return order
 

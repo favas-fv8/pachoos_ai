@@ -117,6 +117,35 @@ class OrderPaymentStatusView(APIView):
             )
 
         payment = Payment.objects.filter(order=order).first()
+
+        # Item snapshots so any consumer (cart checkout and Buy Now alike)
+        # receives every product, quantity, variant, price and discount that
+        # was frozen at order placement.
+        items = []
+        for item in order.items.select_related("product", "variant"):
+            discount_pct = float(item.discount or 0)
+            unit_price = float(item.unit_price)
+            base_price = (
+                round(unit_price * 100.0 / (100.0 - discount_pct), 2)
+                if discount_pct < 100
+                else unit_price
+            )
+            items.append(
+                {
+                    "product_id": item.product_id,
+                    "variant_id": item.variant_id,
+                    "product_name": item.product_name,
+                    "variant_name": item.variant_name,
+                    "quantity": item.quantity,
+                    "unit_price": str(item.unit_price),
+                    "base_price": f"{base_price:.2f}",
+                    "discount_percent": str(item.discount),
+                    "gst_percent": str(item.gst_percent),
+                    "gst_amount": str(item.gst_amount),
+                    "line_total": str(item.line_total),
+                }
+            )
+
         return Response(
             {
                 "order_id": str(order.id),
@@ -127,6 +156,21 @@ class OrderPaymentStatusView(APIView):
                     order.payment_method or (payment.method if payment else "")
                 ),
                 "amount": str(order.grand_total),
+                # Amount actually chargeable via the gateway (grand total minus
+                # the cashback the customer put toward this order).
+                "payable_amount": str(order.payable_amount),
+                "subtotal": str(order.subtotal),
+                "discount_total": str(order.discount_total),
+                "tax_total": str(order.tax_total),
+                "coupon_discount": str(order.coupon_discount),
+                "voucher_discount": str(order.voucher_discount),
+                # Potential cashback snapshot — earned only once payment
+                # succeeds (same convention as OrderSerializer).
+                "cashback_earned": (
+                    str(order.cashback_earned)
+                    if order.payment_status == "paid"
+                    else "0.00"
+                ),
                 "cashback_used": str(order.cashback_used),
                 "transaction_id": payment.transaction_id if payment else "",
                 # Delivery snapshot captured at order placement (server-computed
@@ -136,6 +180,7 @@ class OrderPaymentStatusView(APIView):
                 ),
                 "delivery_charge": str(order.delivery_charge),
                 "delivery_free": order.delivery_free,
+                "items": items,
                 "created_at": order.created_at.isoformat(),
             }
         )

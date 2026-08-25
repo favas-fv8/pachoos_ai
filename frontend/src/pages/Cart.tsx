@@ -97,7 +97,9 @@ export default function Cart() {
           : {}),
         payment_method: "cashfree",
       })
-      dispatch(setCartItemCount(0))
+      // The cart itself is intentionally left untouched — items are only
+      // removed by the customer via the Remove button, never by checkout or
+      // any payment outcome.
       dispatch(pushToast({ message: "Order placed! Choose your payment method.", variant: "success" }))
       navigate(`/payment/${res.data.id}`)
     } catch (err) {

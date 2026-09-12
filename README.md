@@ -18,6 +18,44 @@ PACHOOS is being developed as a complete commerce platform covering customer ord
 - **AI:** OpenAI integration
 - **Delivery:** Docker, Nginx, Gunicorn, GitHub Actions, Vercel
 
+## Screenshots
+
+### Storefront
+
+![Home](docs/screenshots/01-home.png)
+![Shop](docs/screenshots/02-shop.png)
+![Product Details](docs/screenshots/05-product-detail.png)
+![Cart](docs/screenshots/13-cart-after-add-click.png)
+![Checkout](docs/screenshots/15-checkout.png)
+
+### Authentication & Customer
+
+![Login](docs/screenshots/08-login.png)
+![Authenticated Home](docs/screenshots/11-after-login-home.png)
+![Wishlist](docs/screenshots/17-wishlist.png)
+![Profile](docs/screenshots/19-account-profile.png)
+![Orders](docs/screenshots/20-account-orders.png)
+![Wallet](docs/screenshots/22-account-wallet.png)
+![Account Settings](docs/screenshots/24-account-settings.png)
+
+### Orders & Payments
+
+![Payment](docs/screenshots/25-payment-for-new-order.png)
+![Completed Order](docs/screenshots/26-account-orders-with-order.png)
+
+### Admin Dashboard
+
+![Admin Dashboard](docs/screenshots/28-admin-dashboard.png)
+![Product Management](docs/screenshots/29-admin-products.png)
+![Order Management](docs/screenshots/30-admin-orders.png)
+![Customer Management](docs/screenshots/32-admin-customers.png)
+
+## Video Demo
+
+Watch the full walkthrough recording: [pachoos-full-app-demo-1440x900.webm](docs/recordings/pachoos-full-app-demo-1440x900.webm).
+
+A screen recording covering the storefront, customer account, checkout and payment, and the admin dashboard. The file is a WebM video (~8 MB) and plays locally in any modern browser.
+
 ## Development Roadmap
 
 | Phase | Area | Status |
@@ -49,6 +87,8 @@ The detailed phase documents are maintained under `docs/`.
 - `docs/07-auth.md` — authentication
 - `docs/05-products-inventory.md` — products and inventory
 - `docs/06-orders-cart.md` — orders and cart
+- `docs/screenshots/` — captured screenshots of the platform
+- `docs/recordings/` — captured screen recordings
 
 ## Project Status
 
